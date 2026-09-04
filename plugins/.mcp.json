@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "raksul_catalog": {
+      "command": "/Users/quan.nh/Projects/raksul-mcp/Printing-service/.venv/bin/python",
+      "args": ["-m", "app.mcp_server.server"],
+      "enabled": true,
+      "env": {
+        "PYTHONPATH": "/Users/quan.nh/Projects/raksul-mcp/Printing-service"
+      }
+    }
+  }
+}

@@ -7,3 +7,5 @@ python-dotenv>=1.0,<2
 requests>=2.32,<3
 SQLAlchemy>=2.0,<3
 pytest>=8,<10
+gradio 
+ollama
