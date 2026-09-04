@@ -23,12 +23,13 @@ Go service ------+            reads rows, proxies GET /media/{key}
 
 ## What it produces
 
-Per the PoC budget: **150 products**, each with exactly **3 sizes (S/M/L)** and
-**up to 3 images**, spread across the 16 top-level categories.
+Per the PoC budget: **70 products**, each with exactly **3 sizes (S/M/L)** and
+**up to 3 images**, spread across **8** of the 16 top-level categories. Both
+numbers are configurable -- see [Choosing how much to crawl](#choosing-how-much-to-crawl).
 
 | Table | Written | Notes |
 |---|---|---|
-| `categories` | 16 top-level slugs | Subcategories are traversed but not stored; products attach to their L1 ancestor. |
+| `categories` | one row per crawled top-level slug | Subcategories are traversed but not stored; products attach to their L1 ancestor. |
 | `products` | one per `/products/{id}` | `base_price_jpy` is the cheapest variant. |
 | `product_sizes` | 3 per product | `S`/`M`/`L` by ascending price; `price_adjustment_jpy` is the delta from base. |
 | `product_images` | up to 3 per product | Stores the MinIO **object key**, never a URL. |
@@ -44,11 +45,13 @@ From the repo root, start Postgres and MinIO (both bind to `127.0.0.1` only):
 docker compose up -d
 ```
 
-Then, in this directory, create and **activate** the virtualenv:
+Then, in this directory, create and **activate** the virtualenv. Use Homebrew
+Python 3.13 — macOS's system `/usr/bin/python3` is 3.9 and linked against
+LibreSSL, which makes urllib3 warn on every command:
 
 ```bash
 cd crawler
-python3 -m venv .venv
+python -m venv .venv
 source .venv/bin/activate          # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
 cp .env.example .env
@@ -73,14 +76,14 @@ With the virtualenv active (`(.venv)` in your prompt):
 # 1. Create the tables from go-backend/schema.sql (DROPs any existing ones)
 python -m stockroom_crawler.cli init-db
 
-# 2. Crawl 150 products across all 16 categories and import them
+# 2. Crawl and import (defaults: 70 products across 8 categories)
 python -m stockroom_crawler.cli crawl
 
 # 3. Check what landed
 python -m stockroom_crawler.cli stats
 ```
 
-A full 150-product run takes **45–60 minutes** — roughly 3–4 minutes per
+A 70-product run takes roughly **25–30 minutes** — about 3–4 minutes per
 category. Most of that is discovery: subcategory pages are fetched at a 1.25 s
 delay while hunting for products that carry at least three SKUs. Everything is
 committed per product, so an interrupted run keeps what it already imported and
@@ -90,24 +93,43 @@ To trade politeness for speed, lower the delay — `CRAWL_REQUEST_DELAY=0.6`
 roughly halves the wall time and stays well within reasonable limits for a site
 this size.
 
-### Crawling fewer products
+### Choosing how much to crawl
 
-Set `CRAWL_MAX_PRODUCTS` in `.env` — that is the only change needed:
-
-```bash
-CRAWL_MAX_PRODUCTS=30
-```
-
-The budget is divided across the 16 categories and re-divided as the run
-proceeds, so the total is met exactly and a thin category's shortfall is picked
-up by later ones. A budget below 16 simply stops once it is spent, covering
-that many categories with one product each.
-
-`--limit` overrides the setting for a single run without editing `.env`:
+Two knobs in `.env` control the size of a run — the defaults are 70 products
+across 8 categories:
 
 ```bash
-python -m stockroom_crawler.cli crawl --limit 30
+CRAWL_MAX_PRODUCTS=70      # total products
+CRAWL_MAX_CATEGORIES=8     # how many top-level categories to draw from
 ```
+
+The budget is divided across the selected categories and **re-divided as the
+run proceeds**, so the total is met exactly and a thin category's shortfall is
+picked up by later ones:
+
+| Products | Categories | Per-category plan |
+|---|---|---|
+| 70 | 8 | `9, 9, 9, 9, 9, 9, 8, 8` |
+| 70 | 7 | `10, 10, 10, 10, 10, 10, 10` |
+| 150 | 16 | `10, 10, 10, 10, 10, 10, 9, …` |
+
+Categories are taken from the top of the whitelist. To pick *which* ones
+instead of just how many, set `CRAWL_CATEGORIES` — it overrides the default
+order, and the count still caps it:
+
+```bash
+CRAWL_CATEGORIES=store_supplies,daily_life_goods,drinks_food
+```
+
+An unknown slug fails fast with the list of valid ones. Both knobs have
+per-run flags, so you can experiment without editing `.env`:
+
+```bash
+python -m stockroom_crawler.cli crawl --limit 70 --categories 8
+```
+
+If the budget is smaller than the category count, the run simply stops once
+it is spent — `--limit 5 --categories 8` visits 5 categories, one product each.
 
 ### Useful variations
 
@@ -155,7 +177,9 @@ All settings come from `.env` (see `.env.example`):
 | `STOCKROOM_DATABASE_URL` | `postgresql://raksul:raksul_password@127.0.0.1:5432/stockroom` | Required; no default in code. |
 | `MINIO_ENDPOINT` | `127.0.0.1:9000` | S3 API address. |
 | `MINIO_BUCKET` | `stockroom-media` | Created on first run if absent. |
-| `CRAWL_MAX_PRODUCTS` | `150` | Total budget across all categories. |
+| `CRAWL_MAX_PRODUCTS` | `70` | Total products across the selected categories. |
+| `CRAWL_MAX_CATEGORIES` | `8` | How many top-level categories to draw from. |
+| `CRAWL_CATEGORIES` | _(unset)_ | Comma-separated slugs; overrides the default ordering. |
 | `CRAWL_SIZES_PER_PRODUCT` | `3` | Variants needed to earn S/M/L labels. |
 | `CRAWL_MAX_IMAGES` | `3` | Cap per product. |
 | `CRAWL_REQUEST_DELAY` | `1.25` | Seconds between product-page requests. |
@@ -186,7 +210,7 @@ the first three are downloaded and put to MinIO under a content-addressed key
 python -m pytest
 ```
 
-Nine tests run against trimmed fixtures captured from real pages — no network
+Fourteen tests run against trimmed fixtures captured from real pages — no network
 and no database required.
 
 ## Gotchas
@@ -205,9 +229,7 @@ and no database required.
 - **Popular products can have hundreds of SKUs** (product 4734 has 309), and a
   product page does not list its siblings. SKU candidates come from category
   listing pages, capped at three.
-- **`NotOpenSSLWarning: urllib3 v2 only supports OpenSSL 1.1.1+`** on every
-  command is harmless noise from macOS's system Python (3.9.6, built against
-  LibreSSL). Requests still work. Installing a newer Python removes it.
-- **Python 3.9 is the floor here.** Every module relies on
-  `from __future__ import annotations`, so modern type syntax (`str | None`)
-  parses on the system interpreter. Keep that import when adding files.
+- **Build the venv with Homebrew Python, not macOS's `/usr/bin/python3`.** The
+  system 3.9 is linked against LibreSSL, and urllib3 v2 warns
+  (`NotOpenSSLWarning`) on every command because it only supports OpenSSL
+  1.1.1+. Harmless, but noisy — `brew install python@3.13` avoids it.

@@ -52,9 +52,27 @@ class Settings:
     minio_bucket: str
     minio_secure: bool
     max_products: int
+    max_categories: int
+    categories: tuple
     sizes_per_product: int
     max_images: int
     request_delay: float
+
+    def selected_categories(self) -> list:
+        """Top-level slugs to crawl, in order, capped by `max_categories`.
+
+        An explicit `CRAWL_CATEGORIES` list wins; otherwise the whitelist is
+        taken in declaration order.
+        """
+        chosen = list(self.categories) or list(TOP_LEVEL_CATEGORIES)
+        unknown = [slug for slug in chosen if slug not in TOP_LEVEL_CATEGORIES]
+        if unknown:
+            raise SystemExit(
+                "Unknown category slug(s): "
+                + ", ".join(unknown)
+                + "\nRun `python -m stockroom_crawler.cli categories` for valid slugs."
+            )
+        return chosen[: self.max_categories]
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -70,7 +88,13 @@ class Settings:
             minio_secret_key=os.getenv("MINIO_SECRET_KEY", "minioadmin"),
             minio_bucket=os.getenv("MINIO_BUCKET", "stockroom-media"),
             minio_secure=os.getenv("MINIO_SECURE", "false").lower() == "true",
-            max_products=_int("CRAWL_MAX_PRODUCTS", 150),
+            max_products=_int("CRAWL_MAX_PRODUCTS", 70),
+            max_categories=_int("CRAWL_MAX_CATEGORIES", len(TOP_LEVEL_CATEGORIES)),
+            categories=tuple(
+                slug.strip()
+                for slug in os.getenv("CRAWL_CATEGORIES", "").split(",")
+                if slug.strip()
+            ),
             sizes_per_product=_int("CRAWL_SIZES_PER_PRODUCT", len(SIZE_LABELS)),
             max_images=_int("CRAWL_MAX_IMAGES", 3),
             request_delay=float(os.getenv("CRAWL_REQUEST_DELAY", "1.25")),

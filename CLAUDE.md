@@ -76,7 +76,7 @@ Crawl is two-stage. Stage A ([discovery.py](app/crawler/discovery.py)) fetches e
 - **Prices are tiered and fractional** (`lowPrice` bulk vs `highPrice` at minimum order, values like 916.5). The schema stores one integer, so the crawler keeps `ceil(highPrice)`. There is no quantity model.
 - **A bare L1 category page lists no products** — it is a hub of subcategory tiles. Discovery must walk depth ≥ 2. Only the 16 L1 categories are persisted; products attach to their L1 ancestor.
 - **`init-db` drops every table**, `users` and `orders` included. Use `crawl --reset` to re-import just the catalog.
-- **The crawler is a separate service.** It has its own `crawler/.venv` and does not share the root project's dependencies; it needs only psycopg, minio, and requests. Only Python 3.9.6 is on this machine, so every module relies on `from __future__ import annotations` for modern type syntax.
+- **The crawler is a separate service.** It has its own `crawler/.venv` and does not share the root project's dependencies; it needs only psycopg, minio, and requests. Build that venv with `python3.13` (Homebrew): macOS's `/usr/bin/python3` is 3.9 on LibreSSL, which makes urllib3 v2 print a `NotOpenSSLWarning` on every command.
 - **schema.sql had two defects** now fixed: a `UNIQUE(product_id, display_order)` referencing a column that was never defined, and a trailing comma before `)` in `product_sizes`. Either one makes the whole file fail to execute.
 
 ## MCP tool contract

@@ -21,6 +21,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     crawl = commands.add_parser("crawl", help="crawl and import products")
     crawl.add_argument("--category", help="restrict to one top-level slug")
+    crawl.add_argument(
+        "--categories",
+        type=int,
+        metavar="N",
+        help="use only the first N top-level categories (overrides CRAWL_MAX_CATEGORIES)",
+    )
     crawl.add_argument("--limit", type=int, help="override CRAWL_MAX_PRODUCTS")
     crawl.add_argument(
         "--reset", action="store_true", help="truncate crawled tables first"
@@ -60,8 +66,15 @@ def main(argv: list[str] | None = None) -> None:
             connection.close()
         return
 
+    overrides = {}
     if args.limit:
-        settings = replace_limit(settings, args.limit)
+        overrides["max_products"] = args.limit
+    if args.categories:
+        overrides["max_categories"] = args.categories
+    if overrides:
+        from dataclasses import replace
+
+        settings = replace(settings, **overrides)
     if args.reset:
         connection = db.connect(settings.database_url)
         try:
@@ -85,12 +98,6 @@ def main(argv: list[str] | None = None) -> None:
         print("\nPer category:")
         for slug, count in summary.per_category.items():
             print(f"  {slug}: {count}")
-
-
-def replace_limit(settings: Settings, limit: int) -> Settings:
-    from dataclasses import replace
-
-    return replace(settings, max_products=limit)
 
 
 if __name__ == "__main__":

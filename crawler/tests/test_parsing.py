@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from stockroom_crawler.config import TOP_LEVEL_CATEGORIES
+from stockroom_crawler.config import TOP_LEVEL_CATEGORIES, Settings
 from stockroom_crawler.discovery import (
     category_pages_by_top_level,
     general_sitemap_url,
@@ -87,3 +87,58 @@ def test_bare_top_level_category_pages_are_dropped():
 def test_whitelist_covers_the_sixteen_landing_tiles():
     assert len(TOP_LEVEL_CATEGORIES) == 16
     assert "store_supplies" in TOP_LEVEL_CATEGORIES
+
+
+def _settings(**overrides):
+    defaults = dict(
+        database_url="postgresql://x/y",
+        minio_endpoint="127.0.0.1:9000",
+        minio_access_key="k",
+        minio_secret_key="s",
+        minio_bucket="b",
+        minio_secure=False,
+        max_products=70,
+        max_categories=len(TOP_LEVEL_CATEGORIES),
+        categories=(),
+        sizes_per_product=3,
+        max_images=3,
+        request_delay=0.0,
+    )
+    return Settings(**{**defaults, **overrides})
+
+
+def test_category_count_caps_the_selection():
+    assert len(_settings(max_categories=8).selected_categories()) == 8
+    assert len(_settings(max_categories=16).selected_categories()) == 16
+
+
+def test_explicit_category_list_wins_over_the_default_order():
+    chosen = _settings(categories=("gifts", "drinks_food")).selected_categories()
+    assert chosen == ["gifts", "drinks_food"]
+
+
+def test_count_also_caps_an_explicit_list():
+    chosen = _settings(
+        categories=("gifts", "drinks_food", "store_supplies"), max_categories=2
+    ).selected_categories()
+    assert chosen == ["gifts", "drinks_food"]
+
+
+def test_unknown_category_slug_is_rejected():
+    with pytest.raises(SystemExit, match="nope_not_real"):
+        _settings(categories=("nope_not_real",)).selected_categories()
+
+
+def test_budget_is_met_exactly_across_the_selected_categories():
+    """Mirrors pipeline.run's allocation: ceil(remaining / categories_left)."""
+    import math
+
+    for budget, count in ((70, 8), (70, 7), (150, 16), (20, 8)):
+        remaining, plan = budget, []
+        for index in range(count):
+            if remaining <= 0:
+                break
+            want = min(remaining, math.ceil(remaining / (count - index)))
+            plan.append(want)
+            remaining -= want
+        assert sum(plan) == budget, (budget, count, plan)

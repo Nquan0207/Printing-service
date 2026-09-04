@@ -113,11 +113,18 @@ def run(settings: Settings, only_category: str | None = None) -> CrawlSummary:
     store = ImageStore(settings)
     store.ensure_bucket()
 
-    slugs = (
-        [only_category] if only_category else list(TOP_LEVEL_CATEGORIES)
+    if only_category:
+        if only_category not in TOP_LEVEL_CATEGORIES:
+            raise SystemExit(f"Unknown top-level category: {only_category}")
+        slugs = [only_category]
+    else:
+        slugs = settings.selected_categories()
+    log.info(
+        "Budget: %d products across %d categories (%s)",
+        settings.max_products,
+        len(slugs),
+        ", ".join(slugs),
     )
-    if only_category and only_category not in TOP_LEVEL_CATEGORIES:
-        raise SystemExit(f"Unknown top-level category: {only_category}")
 
     log.info("Reading sitemap index")
     index_xml = client.get_text(SITEMAP_INDEX_URL, delayed=False)
