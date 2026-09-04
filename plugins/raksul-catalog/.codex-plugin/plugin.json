@@ -1,0 +1,22 @@
+{
+  "name": "raksul-catalog",
+  "version": "0.1.0",
+  "description": "Search a read-only local snapshot of the RAKSUL Apparel catalog.",
+  "author": {
+    "name": "RAKSUL Catalog local developer"
+  },
+  "interface": {
+    "displayName": "RAKSUL Catalog",
+    "shortDescription": "Search a local RAKSUL Apparel snapshot.",
+    "longDescription": "Read-only product search, product details, categories, and catalog coverage for a limited non-real-time RAKSUL Apparel snapshot.",
+    "developerName": "RAKSUL Catalog local developer",
+    "category": "Productivity",
+    "capabilities": ["Read"],
+    "defaultPrompt": [
+      "Show the RAKSUL catalog coverage.",
+      "Search the RAKSUL catalog for apparel.",
+      "List available RAKSUL categories."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

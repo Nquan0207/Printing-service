@@ -4,6 +4,7 @@
       "command": "/Users/quan.nh/Projects/raksul-mcp/Printing-service/.venv/bin/python",
       "args": ["-m", "app.mcp_server.server"],
       "enabled": true,
+      "startup_timeout_sec": 30,
       "env": {
         "PYTHONPATH": "/Users/quan.nh/Projects/raksul-mcp/Printing-service"
       }
