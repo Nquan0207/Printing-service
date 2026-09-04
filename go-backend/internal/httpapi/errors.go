@@ -9,12 +9,13 @@ import (
 // Error codes from docs/api-contract.yaml. Callers write one error path, so
 // every non-2xx response uses this envelope without exception.
 const (
-	CodeInvalidRequest  = "invalid_request"
-	CodeProductNotFound = "product_not_found"
-	CodeSizeNotFound    = "size_not_found"
-	CodeCartEmpty       = "cart_empty"
-	CodeOrderNotFound   = "order_not_found"
-	CodeInternal        = "internal"
+	CodeInvalidRequest   = "invalid_request"
+	CodeProductNotFound  = "product_not_found"
+	CodeSizeNotFound     = "size_not_found"
+	CodeCartEmpty        = "cart_empty"
+	CodeCartItemNotFound = "cart_item_not_found"
+	CodeOrderNotFound    = "order_not_found"
+	CodeInternal         = "internal"
 )
 
 type errorBody struct {

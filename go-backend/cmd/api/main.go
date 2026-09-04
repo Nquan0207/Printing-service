@@ -41,9 +41,17 @@ func run() error {
 		return err
 	}
 
+	// Seed the fallback user before serving, so a request without an identity
+	// header can never hit a missing foreign key.
+	defaultUserID, err := db.EnsureDefaultUser(ctx)
+	if err != nil {
+		return err
+	}
+	slog.Info("default user ready", "id", defaultUserID, "email", store.DefaultUserEmail)
+
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.New(db, objects).Routes(),
+		Handler:           httpapi.New(db, objects, defaultUserID).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

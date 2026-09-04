@@ -23,7 +23,9 @@ info:
     The MCP server calls it once, keeps the `user_id` in its
     `UserContext { userId }`, and sends that id as `X-Stockroom-User` on every
     subsequent call. External hosts (Claude, ChatGPT) never log in; requests
-    without the header fall back to the seeded default user, Alice (id 1).
+    without the header fall back to the seeded default user,
+    `alice@stockroom.local`. **Its id is assigned by the database and must not
+    be hard-coded** -- resolve it via `login` if you need it explicitly.
 
     No other endpoint accepts a `user_id` in a body or query string, and no MCP
     tool exposes one — tool arguments are model-controlled, so such a parameter
@@ -384,8 +386,9 @@ components:
       description: |
         The `user_id` returned by `POST /api/v1/login`, resolved by the MCP
         server into its `UserContext`. Omitted requests fall back to the seeded
-        default user, Alice (id 1). Trusted without verification — see the
-        Identity section.
+        default user (`alice@stockroom.local`), whose id the database assigns —
+        do not hard-code it. Trusted without verification — see the Identity
+        section.
       schema: { type: integer, format: int64 }
       example: 1
 
@@ -399,8 +402,10 @@ components:
             error: { code: invalid_request, message: "quantity must be at least 1." }
     NotFound:
       description: |
-        Unknown id. `product_not_found`, `size_not_found` (absent, or not a
-        size of that product), or `order_not_found`.
+        Unknown id: `product_not_found`, `size_not_found` (absent, or not a
+        size of that product), `cart_item_not_found` (absent, or belonging to
+        another user -- reported as not found so the endpoint cannot be used to
+        probe for someone else's lines), or `order_not_found`.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -428,6 +433,7 @@ components:
                 - product_not_found
                 - size_not_found
                 - cart_empty
+                - cart_item_not_found
                 - order_not_found
                 - internal
             message:

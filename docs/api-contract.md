@@ -62,7 +62,7 @@ Identity must come from the **transport**, which the model cannot influence.
 ```
 Host
   |  Custom chat  -> email entered/picked in the UI
-  |  Claude,ChatGPT -> no identity at all; falls back to Alice
+  |  Claude,ChatGPT -> no identity at all; falls back to the default user
   v
 MCP server            <-- the ONLY place identity is decided
   |  POST /api/v1/login { email }  ->  { user_id }   (once)
@@ -83,7 +83,7 @@ single tool, endpoint, or query.
 | Hop | Identity available | PoC behaviour |
 |---|---|---|
 | Custom chat → MCP | The email the person entered or picked. | `login` returns its `user_id`; the session keeps it. |
-| Claude / ChatGPT → MCP | **None** — there is no OAuth in the PoC. | No login call; falls back to Alice. |
+| Claude / ChatGPT → MCP | **None** — there is no OAuth in the PoC. | No login call; falls back to the seeded default user. |
 | View → MCP | The session it was rendered in; sends **no** identity. | `app.callServerTool()` carries tool args only. |
 | MCP → Go | `X-Stockroom-User`, set by the MCP server. | Go trusts it (see below). |
 | Go → DB | `user_id` from its resolver. | `WHERE user_id = $1` on cart and orders. |
@@ -120,9 +120,13 @@ rather than merely supplemented.
 
 One user is seeded at startup so requests without the header always resolve:
 
-| id | Name | Email |
-|---|---|---|
-| 1 | Alice | `alice@stockroom.local` |
+| Name | Email |
+|---|---|
+| Alice | `alice@stockroom.local` |
+
+**Her id is whatever `BIGSERIAL` assigns — do not hard-code `1`.** The seed
+upserts on email, and the sequence advances on unrelated inserts, so the id
+differs between environments. Call `login` with that address if you need it.
 
 Everyone else is created on demand by `login`.
 
@@ -148,6 +152,7 @@ Every non-2xx response:
 | `product_not_found` | 404 | Unknown product id. |
 | `size_not_found` | 404 | Size id absent, or not a size of that product. |
 | `cart_empty` | 409 | `POST /orders` with nothing in the cart. |
+| `cart_item_not_found` | 404 | Cart line absent, or owned by another user. |
 | `order_not_found` | 404 | Unknown order number. |
 | `internal` | 500 | Anything else; details logged, not returned. |
 
