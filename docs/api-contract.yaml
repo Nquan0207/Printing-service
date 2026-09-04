@@ -1,0 +1,591 @@
+openapi: 3.1.0
+
+# Machine-readable form of docs/api-contract.md. That document holds the
+# rationale; this file holds the exact shapes. If the two ever disagree,
+# the markdown is the intent and this is the bug.
+
+info:
+  title: Stockroom Go service
+  version: 1.0.0
+  summary: Catalog, quote, cart, and order API consumed by the MCP server.
+  description: |
+    The Go service owns SQL, MinIO, pricing arithmetic, and order writes.
+    The MCP server owns tool definitions, `ui://` Views, and the confirm-gate
+    on `place_order`; it holds no SQL and never reaches MinIO directly.
+
+    ## Identity
+
+    No endpoint accepts a `user_id` in a body or query string, and no MCP tool
+    exposes one — tool arguments are model-controlled, so such a parameter
+    would let a prompt injection act as another user. The MCP server resolves
+    a `UserContext { userId }` and passes it in the `X-Stockroom-User` header.
+
+    **This header is trusted without verification.** That is safe only while
+    two properties hold together: the service binds `127.0.0.1` and is never
+    exposed, and the MCP server is its sole client. Otherwise the header is a
+    free impersonation switch. When real auth lands, a verified token must
+    *replace* it, not sit beside it.
+
+    Seeded users: 1 Alice (default), 2 Bob, 3 Charlie.
+
+    ## Conventions
+
+    - Money is an integer of yen. `unit_price_jpy = base_price_jpy + price_adjustment_jpy`.
+    - Sizes are ordered by `price_adjustment_jpy` ascending — **never**
+      alphabetically, which yields L, M, S. Images are ordered by `id`.
+    - Image fields are same-origin **paths** (`/media/...`), never MinIO URLs;
+      an iframe sandbox cannot fetch an arbitrary host.
+    - Unknown query parameters are ignored, not rejected.
+    - Timestamps are RFC 3339 UTC.
+
+servers:
+  - url: http://127.0.0.1:8080
+    description: Loopback only. Never publish, tunnel, or forward this port.
+
+tags:
+  - name: Catalog
+    description: Read-only product and category data. No identity required.
+  - name: Quote
+    description: Mock pricing. No tax, shipping, or volume discount.
+  - name: Cart
+    description: Persisted in `cart_items`, scoped to the current user.
+  - name: Orders
+    description: Mock checkout. Writes `orders` and `order_items`.
+  - name: Media
+    description: Image proxy to MinIO.
+  - name: Health
+
+paths:
+  /api/v1/products:
+    get:
+      tags: [Catalog]
+      summary: Search products
+      operationId: searchProducts
+      description: |
+        Backs the `search_products` MCP tool. Filters combine with AND.
+        An empty result is `200` with `products: []` — **not** a 404. Saying
+        "nothing in this snapshot" is the MCP tool's job, not this endpoint's.
+      parameters:
+        - name: q
+          in: query
+          description: Case-insensitive match against name and description.
+          schema: { type: string }
+          example: 紙袋
+        - name: category
+          in: query
+          description: Top-level category slug.
+          schema: { type: string }
+          example: store_supplies
+        - name: min_price
+          in: query
+          schema: { type: integer, minimum: 0 }
+        - name: max_price
+          in: query
+          schema: { type: integer, minimum: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+      responses:
+        "200":
+          description: Matching products, newest id first.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductList" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
+  /api/v1/products/{id}:
+    get:
+      tags: [Catalog]
+      summary: Get one product
+      operationId: getProduct
+      description: Full product including `description`. Used by the detail View.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+      responses:
+        "200":
+          description: The product.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Product" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/categories:
+    get:
+      tags: [Catalog]
+      summary: List categories that hold products
+      operationId: listCategories
+      description: |
+        Only categories with at least one product, so a filter chip never
+        renders a dead option.
+      responses:
+        "200":
+          description: Categories with product counts.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [categories]
+                properties:
+                  categories:
+                    type: array
+                    items: { $ref: "#/components/schemas/Category" }
+
+  /api/v1/quote:
+    post:
+      tags: [Quote]
+      summary: Price a quantity of one size
+      operationId: createQuote
+      description: |
+        Backs the `get_quote` MCP tool. `subtotal_jpy = unit_price_jpy × quantity`.
+
+        The source site prices in quantity tiers, but the schema stores one
+        price per size, so **there is no volume discount**. `notes` says so
+        explicitly — surface it rather than letting a model imply a real quote.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/QuoteRequest" }
+      responses:
+        "200":
+          description: The computed quote.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Quote" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/cart:
+    get:
+      tags: [Cart]
+      summary: Get the current user's cart
+      operationId: getCart
+      parameters: [{ $ref: "#/components/parameters/UserHeader" }]
+      responses:
+        "200": { $ref: "#/components/responses/CartResponse" }
+
+  /api/v1/cart/items:
+    post:
+      tags: [Cart]
+      summary: Add to cart
+      operationId: addCartItem
+      description: |
+        Backs the `add_to_cart` MCP tool. **Adds to** any existing line for the
+        same (product, size) — `UNIQUE(user_id, product_id, product_size_id)`
+        makes this an upsert. Use `PATCH` to set an absolute quantity.
+
+        Returns the whole cart so a View re-renders from one response and never
+        recomputes a total.
+      parameters: [{ $ref: "#/components/parameters/UserHeader" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AddCartItemRequest" }
+      responses:
+        "200": { $ref: "#/components/responses/CartResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/cart/items/{item_id}:
+    parameters:
+      - name: item_id
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - $ref: "#/components/parameters/UserHeader"
+    patch:
+      tags: [Cart]
+      summary: Set a line's quantity
+      operationId: updateCartItem
+      description: "Sets an absolute quantity. `quantity: 0` deletes the line."
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [quantity]
+              properties:
+                quantity: { type: integer, minimum: 0, example: 200 }
+      responses:
+        "200": { $ref: "#/components/responses/CartResponse" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Cart]
+      summary: Remove a line
+      operationId: deleteCartItem
+      responses:
+        "200": { $ref: "#/components/responses/CartResponse" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/orders:
+    post:
+      tags: [Orders]
+      summary: Place the order
+      operationId: placeOrder
+      description: |
+        Backs the `place_order` MCP tool. In one transaction: inserts `orders`,
+        snapshots each cart line into `order_items` (copying `product_name`,
+        `size_name`, and `unit_price_jpy` so later catalog edits cannot rewrite
+        history), clears the cart.
+
+        Repeating a request with the same `idempotency_key` returns the
+        original order rather than creating a second one — a retry after a
+        dropped response must not double-order.
+
+        **The confirm-gate is not here.** requirement.md requires `place_order`
+        to be reachable only from the confirm View; this endpoint cannot see
+        which View called it, so the MCP server must enforce that.
+      parameters: [{ $ref: "#/components/parameters/UserHeader" }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PlaceOrderRequest" }
+      responses:
+        "201":
+          description: The created order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "409":
+          description: The cart is empty.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+              example:
+                error: { code: cart_empty, message: "The cart is empty." }
+
+  /api/v1/orders/{order_number}:
+    get:
+      tags: [Orders]
+      summary: Get an order
+      operationId: getOrder
+      description: Backs the `get_order` MCP tool.
+      parameters:
+        - name: order_number
+          in: path
+          required: true
+          schema: { type: string }
+          example: RKS-20260904-0001
+        - $ref: "#/components/parameters/UserHeader"
+      responses:
+        "200":
+          description: The order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Order" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /media/{key}:
+    get:
+      tags: [Media]
+      summary: Stream a product image from MinIO
+      operationId: getMedia
+      description: |
+        `key` is the full `product_images.image_key` and **contains slashes**
+        (`products/158/ab12….jpg`), so route it as a wildcard — a standard
+        OpenAPI path parameter does not match `/`.
+
+        Streams `GetObject` with MinIO's `Content-Type` and a long
+        `Cache-Control`. Read-only; there is no listing endpoint and the bucket
+        stays private, so this proxy is its only reader.
+      parameters:
+        - name: key
+          in: path
+          required: true
+          schema: { type: string }
+          example: products/158/ab12cd34ef56.jpg
+      responses:
+        "200":
+          description: Image bytes.
+          content:
+            image/*:
+              schema: { type: string, format: binary }
+        "404":
+          description: No object with that key.
+
+  /healthz:
+    get:
+      tags: [Health]
+      summary: Liveness and dependency check
+      operationId: healthz
+      responses:
+        "200":
+          description: All dependencies reachable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+        "503":
+          description: A dependency is down.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Health" }
+
+components:
+  parameters:
+    UserHeader:
+      name: X-Stockroom-User
+      in: header
+      required: false
+      description: |
+        The `userId` resolved by the MCP server. Omitted requests fall back to
+        Alice (id 1). Trusted without verification — see the Identity section.
+      schema: { type: integer, format: int64 }
+      example: 1
+
+  responses:
+    BadRequest:
+      description: Malformed body, bad type, or `quantity < 1`.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example:
+            error: { code: invalid_request, message: "quantity must be at least 1." }
+    NotFound:
+      description: |
+        Unknown id. `product_not_found`, `size_not_found` (absent, or not a
+        size of that product), or `order_not_found`.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example:
+            error: { code: product_not_found, message: "Product 999 does not exist." }
+    CartResponse:
+      description: The full cart after the operation.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Cart" }
+
+  schemas:
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+              enum:
+                - invalid_request
+                - product_not_found
+                - size_not_found
+                - cart_empty
+                - order_not_found
+                - internal
+            message:
+              type: string
+              description: Human-readable. Never leaks internal detail on `internal`.
+
+    Category:
+      type: object
+      required: [id, slug, name]
+      properties:
+        id: { type: integer, format: int64, example: 3 }
+        slug: { type: string, example: store_supplies }
+        name: { type: string, example: 店舗用品 }
+        product_count: { type: integer, example: 9 }
+
+    Size:
+      type: object
+      required: [id, size_name, price_adjustment_jpy, unit_price_jpy]
+      properties:
+        id: { type: integer, format: int64, example: 34 }
+        size_name:
+          type: string
+          description: S, M, or L.
+          example: S
+        price_adjustment_jpy:
+          type: integer
+          description: Delta from the product's `base_price_jpy`. May be negative.
+          example: 0
+        unit_price_jpy:
+          type: integer
+          description: Precomputed `base_price_jpy + price_adjustment_jpy`.
+          example: 168
+
+    Product:
+      type: object
+      required: [id, name, base_price_jpy, category, sizes, images]
+      properties:
+        id: { type: integer, format: int64, example: 12 }
+        source_product_id:
+          type: string
+          description: The stockroom.raksul.com product id.
+          example: "158"
+        name: { type: string, example: 手提げ紙袋 }
+        brand: { type: [string, "null"], example: ラクスル }
+        description:
+          type: [string, "null"]
+          description: Present on detail; omitted from search results.
+        category: { $ref: "#/components/schemas/Category" }
+        base_price_jpy:
+          type: integer
+          description: The cheapest size's unit price.
+          example: 168
+        sizes:
+          type: array
+          description: Exactly three, ordered by `price_adjustment_jpy` ascending.
+          items: { $ref: "#/components/schemas/Size" }
+        images:
+          type: array
+          description: |
+            Same-origin paths, ordered by id; the first is the card thumbnail.
+            An empty array is normal — render a placeholder.
+          items: { type: string, example: /media/products/158/ab12cd34ef56.jpg }
+      example:
+        id: 12
+        source_product_id: "158"
+        name: 手提げ紙袋
+        brand: ラクスル
+        description: プロのデザインで素早く使える…
+        category: { id: 3, slug: store_supplies, name: 店舗用品 }
+        base_price_jpy: 168
+        sizes:
+          - { id: 34, size_name: S, price_adjustment_jpy: 0, unit_price_jpy: 168 }
+          - { id: 35, size_name: M, price_adjustment_jpy: 18, unit_price_jpy: 186 }
+          - { id: 36, size_name: L, price_adjustment_jpy: 30, unit_price_jpy: 198 }
+        images: [/media/products/158/ab12cd34ef56.jpg]
+
+    ProductList:
+      type: object
+      required: [products, total, limit, offset]
+      properties:
+        products:
+          type: array
+          items: { $ref: "#/components/schemas/Product" }
+        total:
+          type: integer
+          description: Count before pagination, so a View can say "57 results".
+          example: 57
+        limit: { type: integer, example: 20 }
+        offset: { type: integer, example: 0 }
+
+    QuoteRequest:
+      type: object
+      required: [product_id, size_id, quantity]
+      properties:
+        product_id: { type: integer, format: int64, example: 12 }
+        size_id: { type: integer, format: int64, example: 34 }
+        quantity: { type: integer, minimum: 1, example: 500 }
+
+    Quote:
+      type: object
+      required:
+        [product_id, product_name, size_id, size_name, quantity,
+         unit_price_jpy, subtotal_jpy, currency]
+      properties:
+        product_id: { type: integer, format: int64, example: 12 }
+        product_name: { type: string, example: 手提げ紙袋 }
+        size_id: { type: integer, format: int64, example: 34 }
+        size_name: { type: string, example: S }
+        quantity: { type: integer, example: 500 }
+        unit_price_jpy: { type: integer, example: 168 }
+        subtotal_jpy: { type: integer, example: 84000 }
+        currency: { type: string, const: JPY }
+        notes:
+          type: array
+          items: { type: string }
+          example: ["Mock pricing: no tax, shipping, or quantity discounts."]
+
+    AddCartItemRequest:
+      type: object
+      required: [product_id, size_id, quantity]
+      properties:
+        product_id: { type: integer, format: int64, example: 12 }
+        size_id: { type: integer, format: int64, example: 34 }
+        quantity: { type: integer, minimum: 1, example: 500 }
+
+    CartItem:
+      type: object
+      required:
+        [id, product_id, product_name, size_id, size_name, quantity,
+         unit_price_jpy, subtotal_jpy]
+      properties:
+        id: { type: integer, format: int64, example: 7 }
+        product_id: { type: integer, format: int64, example: 12 }
+        product_name: { type: string, example: 手提げ紙袋 }
+        size_id: { type: integer, format: int64, example: 34 }
+        size_name: { type: string, example: S }
+        image:
+          type: [string, "null"]
+          example: /media/products/158/ab12cd34ef56.jpg
+        quantity: { type: integer, example: 500 }
+        unit_price_jpy: { type: integer, example: 168 }
+        subtotal_jpy: { type: integer, example: 84000 }
+
+    Cart:
+      type: object
+      required: [items, item_count, total_jpy]
+      properties:
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/CartItem" }
+        item_count:
+          type: integer
+          description: Number of lines, not the sum of quantities.
+          example: 1
+        total_jpy: { type: integer, example: 84000 }
+
+    PlaceOrderRequest:
+      type: object
+      required: [shipping_address]
+      properties:
+        shipping_address:
+          type: string
+          description: |
+            Taken from the confirm View's form, **not** from the user record —
+            order data the person typed, decoupled from who is calling.
+          example: 東京都渋谷区…
+        idempotency_key:
+          type: string
+          description: Repeat safely; the same key returns the original order.
+          example: 6f1e2c34-8b90-4d2a-9f10-2b7c5e8a1d33
+
+    OrderItem:
+      type: object
+      required: [product_name, size_name, quantity, unit_price_jpy, subtotal_jpy]
+      description: An immutable snapshot; catalog edits never rewrite it.
+      properties:
+        product_id: { type: [integer, "null"], format: int64, example: 12 }
+        product_name: { type: string, example: 手提げ紙袋 }
+        size_name: { type: string, example: S }
+        quantity: { type: integer, example: 500 }
+        unit_price_jpy: { type: integer, example: 168 }
+        subtotal_jpy: { type: integer, example: 84000 }
+
+    Order:
+      type: object
+      required:
+        [order_number, status, shipping_address, total_jpy, items, created_at]
+      properties:
+        order_number: { type: string, example: RKS-20260904-0001 }
+        status:
+          type: string
+          enum: [pending, confirmed, cancelled]
+          default: confirmed
+        shipping_address: { type: string, example: 東京都渋谷区… }
+        total_jpy: { type: integer, example: 84000 }
+        items:
+          type: array
+          items: { $ref: "#/components/schemas/OrderItem" }
+        created_at: { type: string, format: date-time }
+
+    Health:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [ok, degraded] }
+        database: { type: string, enum: [ok, down] }
+        minio: { type: string, enum: [ok, down] }
