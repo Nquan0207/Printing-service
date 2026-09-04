@@ -15,18 +15,25 @@ info:
 
     ## Identity
 
-    No endpoint accepts a `user_id` in a body or query string, and no MCP tool
-    exposes one — tool arguments are model-controlled, so such a parameter
-    would let a prompt injection act as another user. The MCP server resolves
-    a `UserContext { userId }` and passes it in the `X-Stockroom-User` header.
+    `POST /api/v1/login` takes an email and returns a `user_id`, creating the
+    user if the email is new. It is **not** authentication — there is no
+    password, and no credential is ever checked. It exists so the custom chat
+    can pick or add a user for the demo.
 
-    **This header is trusted without verification.** That is safe only while
-    two properties hold together: the service binds `127.0.0.1` and is never
-    exposed, and the MCP server is its sole client. Otherwise the header is a
+    The MCP server calls it once, keeps the `user_id` in its
+    `UserContext { userId }`, and sends that id as `X-Stockroom-User` on every
+    subsequent call. External hosts (Claude, ChatGPT) never log in; requests
+    without the header fall back to the seeded default user, Alice (id 1).
+
+    No other endpoint accepts a `user_id` in a body or query string, and no MCP
+    tool exposes one — tool arguments are model-controlled, so such a parameter
+    would let a prompt injection act as another user.
+
+    **`X-Stockroom-User` is trusted without verification.** That is safe only
+    while two properties hold together: the service binds `127.0.0.1` and is
+    never exposed, and the MCP server is its sole client. Otherwise it is a
     free impersonation switch. When real auth lands, a verified token must
-    *replace* it, not sit beside it.
-
-    Seeded users: 1 Alice (default), 2 Bob, 3 Charlie.
+    *replace* both the header and this login endpoint, not sit beside them.
 
     ## Conventions
 
@@ -43,6 +50,8 @@ servers:
     description: Loopback only. Never publish, tunnel, or forward this port.
 
 tags:
+  - name: Identity
+    description: Mock login. No passwords, no sessions, no credential checks.
   - name: Catalog
     description: Read-only product and category data. No identity required.
   - name: Quote
@@ -56,6 +65,37 @@ tags:
   - name: Health
 
 paths:
+  /api/v1/login:
+    post:
+      tags: [Identity]
+      summary: Resolve or create a user by email
+      operationId: login
+      description: |
+        Returns the `user_id` for `email`, creating the user when the address
+        is new. Idempotent: the same email always yields the same id, so the
+        custom chat can call it on every user switch without accumulating rows.
+
+        **This is not authentication.** No password is taken and nothing is
+        verified — anyone may claim any email. It is safe only because the
+        service is loopback-bound; see the Identity section.
+
+        The caller keeps the returned id and sends it as `X-Stockroom-User`
+        thereafter. Because carts and orders are scoped by `user_id`, switching
+        email switches carts.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LoginRequest" }
+      responses:
+        "200":
+          description: |
+            The user. `created` is true when this call inserted the row.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/User" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+
   /api/v1/products:
     get:
       tags: [Catalog]
@@ -76,21 +116,12 @@ paths:
           description: Top-level category slug.
           schema: { type: string }
           example: store_supplies
-        - name: min_price
-          in: query
-          schema: { type: integer, minimum: 0 }
-        - name: max_price
-          in: query
-          schema: { type: integer, minimum: 0 }
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
-        - name: offset
-          in: query
-          schema: { type: integer, minimum: 0, default: 0 }
       responses:
         "200":
-          description: Matching products, newest id first.
+          description: Matching products.
           content:
             application/json:
               schema: { $ref: "#/components/schemas/ProductList" }
@@ -125,7 +156,7 @@ paths:
         renders a dead option.
       responses:
         "200":
-          description: Categories with product counts.
+          description: Categories.
           content:
             application/json:
               schema:
@@ -178,7 +209,7 @@ paths:
       description: |
         Backs the `add_to_cart` MCP tool. **Adds to** any existing line for the
         same (product, size) — `UNIQUE(user_id, product_id, product_size_id)`
-        makes this an upsert. Use `PATCH` to set an absolute quantity.
+        makes this an upsert.
 
         Returns the whole cart so a View re-renders from one response and never
         recomputes a total.
@@ -194,34 +225,16 @@ paths:
         "404": { $ref: "#/components/responses/NotFound" }
 
   /api/v1/cart/items/{item_id}:
-    parameters:
-      - name: item_id
-        in: path
-        required: true
-        schema: { type: integer, format: int64 }
-      - $ref: "#/components/parameters/UserHeader"
-    patch:
-      tags: [Cart]
-      summary: Set a line's quantity
-      operationId: updateCartItem
-      description: "Sets an absolute quantity. `quantity: 0` deletes the line."
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [quantity]
-              properties:
-                quantity: { type: integer, minimum: 0, example: 200 }
-      responses:
-        "200": { $ref: "#/components/responses/CartResponse" }
-        "400": { $ref: "#/components/responses/BadRequest" }
-        "404": { $ref: "#/components/responses/NotFound" }
     delete:
       tags: [Cart]
       summary: Remove a line
       operationId: deleteCartItem
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/UserHeader"
       responses:
         "200": { $ref: "#/components/responses/CartResponse" }
         "404": { $ref: "#/components/responses/NotFound" }
@@ -236,10 +249,6 @@ paths:
         snapshots each cart line into `order_items` (copying `product_name`,
         `size_name`, and `unit_price_jpy` so later catalog edits cannot rewrite
         history), clears the cart.
-
-        Repeating a request with the same `idempotency_key` returns the
-        original order rather than creating a second one — a retry after a
-        dropped response must not double-order.
 
         **The confirm-gate is not here.** requirement.md requires `place_order`
         to be reachable only from the confirm View; this endpoint cannot see
@@ -338,14 +347,16 @@ components:
       in: header
       required: false
       description: |
-        The `userId` resolved by the MCP server. Omitted requests fall back to
-        Alice (id 1). Trusted without verification — see the Identity section.
+        The `user_id` returned by `POST /api/v1/login`, resolved by the MCP
+        server into its `UserContext`. Omitted requests fall back to the seeded
+        default user, Alice (id 1). Trusted without verification — see the
+        Identity section.
       schema: { type: integer, format: int64 }
       example: 1
 
   responses:
     BadRequest:
-      description: Malformed body, bad type, or `quantity < 1`.
+      description: Malformed body, bad type, missing email, or `quantity < 1`.
       content:
         application/json:
           schema: { $ref: "#/components/schemas/Error" }
@@ -388,6 +399,35 @@ components:
               type: string
               description: Human-readable. Never leaks internal detail on `internal`.
 
+    LoginRequest:
+      type: object
+      required: [email]
+      properties:
+        email:
+          type: string
+          format: email
+          description: The identity key. Matching is case-insensitive.
+          example: alice@stockroom.local
+        name:
+          type: string
+          description: |
+            Used only when creating a new user. Ignored for an existing one, so
+            a returning user's name is never overwritten. Defaults to the local
+            part of the email.
+          example: Alice
+
+    User:
+      type: object
+      required: [user_id, email, name, created]
+      properties:
+        user_id: { type: integer, format: int64, example: 1 }
+        email: { type: string, format: email, example: alice@stockroom.local }
+        name: { type: string, example: Alice }
+        created:
+          type: boolean
+          description: True when this call inserted the row.
+          example: false
+
     Category:
       type: object
       required: [id, slug, name]
@@ -395,7 +435,6 @@ components:
         id: { type: integer, format: int64, example: 3 }
         slug: { type: string, example: store_supplies }
         name: { type: string, example: 店舗用品 }
-        product_count: { type: integer, example: 9 }
 
     Size:
       type: object
@@ -460,17 +499,15 @@ components:
 
     ProductList:
       type: object
-      required: [products, total, limit, offset]
+      required: [products, count]
       properties:
         products:
           type: array
           items: { $ref: "#/components/schemas/Product" }
-        total:
+        count:
           type: integer
-          description: Count before pagination, so a View can say "57 results".
-          example: 57
-        limit: { type: integer, example: 20 }
-        offset: { type: integer, example: 0 }
+          description: Number of products returned.
+          example: 20
 
     QuoteRequest:
       type: object
@@ -548,10 +585,6 @@ components:
             Taken from the confirm View's form, **not** from the user record —
             order data the person typed, decoupled from who is calling.
           example: 東京都渋谷区…
-        idempotency_key:
-          type: string
-          description: Repeat safely; the same key returns the original order.
-          example: 6f1e2c34-8b90-4d2a-9f10-2b7c5e8a1d33
 
     OrderItem:
       type: object

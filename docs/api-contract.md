@@ -61,12 +61,12 @@ Identity must come from the **transport**, which the model cannot influence.
 
 ```
 Host
-  |  Custom chat  -> user picked in the UI (Alice / Bob / Charlie)
-  |  Claude,ChatGPT -> no identity at all; assume Alice
+  |  Custom chat  -> email entered/picked in the UI
+  |  Claude,ChatGPT -> no identity at all; falls back to Alice
   v
 MCP server            <-- the ONLY place identity is decided
-  |  resolves UserContext { userId }
-  |  X-Stockroom-User: 1
+  |  POST /api/v1/login { email }  ->  { user_id }   (once)
+  |  X-Stockroom-User: 1                             (every call after)
   |  (later: Authorization: Bearer <token>)
   v
 Go service            <-- one resolver turns that into a user_id
@@ -82,11 +82,25 @@ single tool, endpoint, or query.
 
 | Hop | Identity available | PoC behaviour |
 |---|---|---|
-| Custom chat → MCP | The `userId` the person selected, on the session. | Three seeded users; the selector sets it. |
-| Claude / ChatGPT → MCP | **None** — there is no OAuth in the PoC. | Defaults to Alice. |
+| Custom chat → MCP | The email the person entered or picked. | `login` returns its `user_id`; the session keeps it. |
+| Claude / ChatGPT → MCP | **None** — there is no OAuth in the PoC. | No login call; falls back to Alice. |
 | View → MCP | The session it was rendered in; sends **no** identity. | `app.callServerTool()` carries tool args only. |
 | MCP → Go | `X-Stockroom-User`, set by the MCP server. | Go trusts it (see below). |
 | Go → DB | `user_id` from its resolver. | `WHERE user_id = $1` on cart and orders. |
+
+### `POST /api/v1/login` is not authentication
+
+It takes an email, returns a `user_id`, and creates the user when the address
+is new. No password is taken and nothing is verified — **anyone may claim any
+email**. It exists so the custom chat can pick or add a demo user, not to
+establish trust.
+
+It is idempotent: the same email always yields the same id, so calling it on
+every user switch never accumulates rows. `name` is honoured only on creation,
+so a returning user's name is not overwritten.
+
+Because carts and orders are scoped by `user_id`, switching email switches
+carts — which is the visible point of having it.
 
 ### The trust boundary
 
@@ -102,16 +116,15 @@ the Go service directly, and the port must never be published, tunnelled, or
 forwarded. When real auth arrives, this header is replaced by a verified token
 rather than merely supplemented.
 
-### Seeded users
+### Seeded default
 
-| id | Name | Email | Used by |
-|---|---|---|---|
-| 1 | Alice | `alice@stockroom.local` | Default for Claude / ChatGPT, and the selector |
-| 2 | Bob | `bob@stockroom.local` | Selector only |
-| 3 | Charlie | `charlie@stockroom.local` | Selector only |
+One user is seeded at startup so requests without the header always resolve:
 
-Carts and orders are per-user, so switching the selector switches carts — which
-is the point of seeding three rather than one.
+| id | Name | Email |
+|---|---|---|
+| 1 | Alice | `alice@stockroom.local` |
+
+Everyone else is created on demand by `login`.
 
 ### User *info* is not identity
 
@@ -142,16 +155,34 @@ Every non-2xx response:
 
 | MCP tool | Endpoint |
 |---|---|
+| — (identity) | `POST /api/v1/login` |
 | `search_products` | `GET /api/v1/products` |
 | — (View detail) | `GET /api/v1/products/{id}` |
 | — (filters) | `GET /api/v1/categories` |
 | `get_quote` | `POST /api/v1/quote` |
-| `add_to_cart` | `POST /api/v1/cart/items` (+ `GET`/`PATCH`/`DELETE`) |
+| `add_to_cart` | `POST /api/v1/cart/items` (+ `GET /cart`, `DELETE /cart/items/{id}`) |
 | `place_order` | `POST /api/v1/orders` |
 | `get_order` | `GET /api/v1/orders/{order_number}` |
 | image bytes | `GET /media/{key}` |
 
 ---
+
+## `POST /api/v1/login`
+
+```json
+{ "email": "bob@stockroom.local", "name": "Bob" }
+```
+
+```json
+{ "user_id": 2, "email": "bob@stockroom.local", "name": "Bob", "created": true }
+```
+
+Upserts on `email` (case-insensitive) and returns the id. `name` applies only
+on creation — a returning user's name is never overwritten — and defaults to
+the local part of the address. `created` tells the caller which happened.
+
+`400 invalid_request` if `email` is missing or malformed. There is no failure
+mode for "wrong password", because there is no password.
 
 ## Shared object: Product
 
@@ -180,21 +211,17 @@ iframe sandbox. An empty array is normal; render a placeholder.
 
 ## `GET /api/v1/products`
 
-Query: `q`, `category` (slug), `min_price`, `max_price`, `limit` (default 20,
-max 100), `offset`.
+Query: `q`, `category` (slug), `limit` (default 20, max 100).
 
 `q` matches name and description, case-insensitive. Filters combine with AND.
 
 ```json
 {
   "products": [ { "…Product without description…" } ],
-  "total": 57,
-  "limit": 20,
-  "offset": 0
+  "count": 20
 }
 ```
 
-`total` is the count before pagination, so a View can say "57 results".
 An empty list is `200` with `"products": []` — **not** a 404. The MCP tool is
 responsible for saying "nothing in this snapshot" rather than "does not exist".
 
@@ -202,7 +229,7 @@ responsible for saying "nothing in this snapshot" rather than "does not exist".
 
 ```json
 { "categories": [
-    { "id": 3, "slug": "store_supplies", "name": "店舗用品", "product_count": 9 }
+    { "id": 3, "slug": "store_supplies", "name": "店舗用品" }
 ] }
 ```
 
@@ -240,7 +267,6 @@ the schema won). Scoped to the demo user.
 ```
 GET    /api/v1/cart                 → Cart
 POST   /api/v1/cart/items           { product_id, size_id, quantity } → Cart
-PATCH  /api/v1/cart/items/{item_id} { quantity }                     → Cart
 DELETE /api/v1/cart/items/{item_id}                                  → Cart
 ```
 
@@ -261,13 +287,13 @@ response and never recomputes a total.
 ```
 
 `POST` **adds to** an existing line's quantity (`UNIQUE(user_id, product_id,
-product_size_id)` makes this an upsert); `PATCH` sets it absolutely.
-`PATCH` with `quantity: 0` deletes the line.
+product_size_id)` makes this an upsert). To correct a quantity, delete the line
+and add it again — the PoC has no absolute-set operation.
 
 ## `POST /api/v1/orders`
 
 ```json
-{ "shipping_address": "東京都…", "idempotency_key": "uuid-optional" }
+{ "shipping_address": "東京都…" }
 ```
 
 Converts the cart to an order in one transaction: inserts `orders`, snapshots
@@ -286,10 +312,6 @@ cart, returns `201`.
   "created_at": "2026-09-04T14:22:31Z"
 }
 ```
-
-Repeating a request with the same `idempotency_key` returns the original order
-instead of creating a second one — a retry after a dropped response must not
-double-order.
 
 > **Enforcement lives in the MCP server.** requirement.md requires
 > `place_order` to be reachable only from the confirm View. This endpoint
