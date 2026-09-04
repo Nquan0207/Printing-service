@@ -142,14 +142,42 @@ ORDER BY ps.price_adjustment_jpy ASC
 ORDER BY pi.id ASC
 ```
 
-## Local run
+## Running it
+
+### In Docker (everything at once)
 
 ```bash
-docker compose up -d          # from the repo root: Postgres + MinIO
-go run ./cmd/api              # http://127.0.0.1:8080
+docker compose up -d --build      # from the repo root: Postgres + MinIO + api
 curl -s 127.0.0.1:8080/healthz
 ```
 
-Expects the same `.env` values the crawler uses (`STOCKROOM_DATABASE_URL`,
-`MINIO_*`); see [crawler/.env.example](../crawler/.env.example). Populate the
-catalog first — an empty database serves valid but empty responses.
+The compose service waits for Postgres and MinIO to report healthy, then runs
+its own `/healthz` check, so `docker compose ps` showing `api (healthy)` means
+the whole chain is up.
+
+> **Why the container binds `0.0.0.0`.** Inside the container the service must
+> listen on `0.0.0.0:8080` or Docker cannot route to it. The published port is
+> scoped to `127.0.0.1:8080`, so it is still unreachable from the network —
+> which is what the contract's loopback-only rule actually requires. Do **not**
+> change the ports line to `8080:8080`: that publishes on every interface and
+> turns `X-Stockroom-User` into an open impersonation switch.
+
+### On the host (for iteration)
+
+```bash
+docker compose up -d postgres minio
+go run ./cmd/api                  # binds 127.0.0.1:8080 by default
+```
+
+Stop the containerised `api` first, or the two will fight over port 8080.
+
+Config comes from the environment with defaults matching `docker-compose.yml`,
+using the same variable names as the crawler (`STOCKROOM_DATABASE_URL`,
+`MINIO_*`). Populate the catalog with [crawler/](../crawler/) first — an empty
+database serves valid but empty responses.
+
+## Image
+
+Multi-stage: `golang:1.26-alpine` builds a static `CGO_ENABLED=0` binary,
+`alpine:3.22` runs it as uid 10001. ~35 MB. Alpine rather than distroless
+purely so the compose `HEALTHCHECK` has a `wget` to call.

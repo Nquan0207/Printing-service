@@ -34,6 +34,29 @@ services:
       timeout: 5s
       retries: 10
 
+  # Go API. Inside the container it binds 0.0.0.0 so Docker can reach it, but
+  # the published port is scoped to 127.0.0.1 -- so the service is still
+  # unreachable from outside this machine, which is what the contract's
+  # loopback-only requirement actually means.
+  api:
+    build: ./go-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      STOCKROOM_ADDR: "0.0.0.0:8080"
+      STOCKROOM_DATABASE_URL: "postgresql://raksul:raksul_password@postgres:5432/stockroom"
+      MINIO_ENDPOINT: "minio:9000"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: stockroom-media
+      MINIO_SECURE: "false"
+    ports:
+      - "127.0.0.1:8080:8080"
+    restart: unless-stopped
+
 volumes:
   raksul_postgres_data:
   raksul_minio_data:
