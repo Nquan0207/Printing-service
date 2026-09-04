@@ -2,11 +2,19 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Overview
+## Two stacks live here
 
-A Python MVP that crawls a bounded sample of RAKSUL Apparel products, normalizes them into PostgreSQL 17, and exposes read-only retrieval through a CLI and an MCP server. Everything is deliberately small and conservative — the crawler is capped by design, and the MCP tools advertise the catalog as an incomplete, non-real-time snapshot.
+**Active work — the stockroom PoC.** [docs/requirement.md](docs/requirement.md) specifies a conversational-commerce PoC over MCP Apps. Its pieces:
 
-## Commands
+- [go-backend/schema.sql](go-backend/schema.sql) — the PoC schema (users, categories, products, product_images, product_sizes, cart_items, orders, order_items). Hand-written DDL, no migration tool; it is the single source of truth.
+- [crawler/](crawler/) — a **standalone** Python service that crawls stockroom.raksul.com into that schema and pushes images to MinIO. Own venv, own `requirements.txt`, own `.env`. See [crawler/README.md](crawler/README.md).
+- A Go service (not yet written) will read those tables and proxy `GET /media/{key}` to MinIO; a separate MCP server calls it. That two-process split is a deliberate deviation from requirement.md, which specifies tools running SQL directly in a single MCP server.
+
+`docker compose up -d` at the root now serves this stack: PostgreSQL 17 with database **`stockroom`** plus MinIO, both bound to `127.0.0.1` only.
+
+**Prior work — the apparel MVP.** [app/](app/) crawls apparel.raksul.com into `raksul_db` via SQLAlchemy and serves a chat-only MCP server. It is a different site, schema, and product. Its database no longer exists in the compose file, so its CLI will fail until `raksul_db` is recreated. Do not extend it for stockroom work.
+
+## Commands (apparel MVP — see crawler/README.md for the stockroom stack)
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
@@ -59,8 +67,17 @@ Crawl is two-stage. Stage A ([discovery.py](app/crawler/discovery.py)) fetches e
 - **Upsert preserves existing data.** [`ProductRepository.upsert`](app/repositories/product_repository.py) drops `None` values from the `ON CONFLICT (product_url) DO UPDATE` set clause (except `colors`/`sizes`), so a later parse that fails to find a description will not blank the stored one. Price history rows are appended only on insert or an actual price change.
 - **`robots.txt` failure is treated as denial.** `HttpClient.robots_allowed` returns `False` if robots cannot be read, which aborts the crawl — intentional, not a bug.
 - **`categories.json` is the crawl whitelist.** Each entry needs a URL reached through RAKSUL's own navigation, unique `industry`/`category` slugs, and a small `max_products`. `--category` matches the `category` slug, which is not unique across industries (`t_shirts` appears twice), so it selects every industry using that slug.
-- **The README's Architecture section says there is no MCP server yet; that is stale** — [app/mcp_server/](app/mcp_server/) exists and is described further down the same README.
-- `go-backend/` is an empty directory on the current `backend/schema` branch.
+- **The README's Architecture section says there is no MCP server yet; that is stale** — [app/mcp_server/](app/mcp_server/) exists and is described further down the same README. The root [README.md](README.md) documents only the apparel MVP and predates the stockroom stack entirely.
+
+## stockroom stack — things that will bite you
+
+- **`/products/{id}` 404s without `?sku=`.** The SKU query parameter is mandatory on stockroom product pages.
+- **Never read prices from the Nuxt payload.** It uses index-based dereferencing, so `"price":181` means *element 181 of a flat array*, not ¥181. Only the schema.org `Product` JSON-LD block has real numbers — that is all [crawler/stockroom_crawler/parser.py](crawler/stockroom_crawler/parser.py) parses.
+- **Prices are tiered and fractional** (`lowPrice` bulk vs `highPrice` at minimum order, values like 916.5). The schema stores one integer, so the crawler keeps `ceil(highPrice)`. There is no quantity model.
+- **A bare L1 category page lists no products** — it is a hub of subcategory tiles. Discovery must walk depth ≥ 2. Only the 16 L1 categories are persisted; products attach to their L1 ancestor.
+- **`init-db` drops every table**, `users` and `orders` included. Use `crawl --reset` to re-import just the catalog.
+- **The crawler is a separate service.** It has its own `crawler/.venv` and does not share the root project's dependencies; it needs only psycopg, minio, and requests. Only Python 3.9.6 is on this machine, so every module relies on `from __future__ import annotations` for modern type syntax.
+- **schema.sql had two defects** now fixed: a `UNIQUE(product_id, display_order)` referencing a column that was never defined, and a trailing comma before `)` in `product_sizes`. Either one makes the whole file fail to execute.
 
 ## MCP tool contract
 

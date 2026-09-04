@@ -1,5 +1,11 @@
 # RAKSUL Product Catalog MVP
 
+> **Note:** this documents the earlier *apparel* MVP in [app/](app/), which targets
+> apparel.raksul.com and its own `raksul_db`. The active work is the stockroom
+> PoC — see [crawler/README.md](crawler/README.md) for the crawler and
+> [docs/requirement.md](docs/requirement.md) for the spec. `docker compose up -d`
+> now provisions the **`stockroom`** database and MinIO, not `raksul_db`.
+
 A conservative two-stage crawler that discovers a small, configurable sample of RAKSUL Apparel products, normalizes product pages, upserts them into PostgreSQL 17, and exposes database-backed retrieval through a service layer and CLI. It intentionally does not include an MCP server yet.
 
 ## Architecture

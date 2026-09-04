@@ -4,3 +4,5 @@ __pycache__/
 .pytest_cache/
 *.py[cod]
 
+crawler/.venv/
+crawler/.env
