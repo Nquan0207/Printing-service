@@ -211,18 +211,41 @@ iframe sandbox. An empty array is normal; render a placeholder.
 
 ## `GET /api/v1/products`
 
-Query: `q`, `category` (slug), `limit` (default 20, max 100).
+Query: `q`, `category` (slug), `min_price`, `max_price`, `limit` (total,
+default 20, max 100), `per_category` (per group).
 
 `q` matches name and description, case-insensitive. Filters combine with AND.
 
+**Price filtering matches on any size.** A product is included when at least
+one of its sizes has a `unit_price_jpy` inside the bounds — so `max_price=1000`
+still finds a product whose S is ¥800 even though its L is ¥1500. Filtering on
+`base_price_jpy` alone would hide products the buyer can in fact afford.
+
+Results are **grouped by category**, so the catalog View renders one section
+per category without regrouping client-side:
+
 ```json
 {
-  "products": [ { "…Product without description…" } ],
-  "count": 20
+  "groups": [
+    {
+      "category": { "id": 3, "slug": "store_supplies", "name": "店舗用品" },
+      "count": 2,
+      "products": [ { "…Product without description…" } ]
+    }
+  ],
+  "count": 12
 }
 ```
 
-An empty list is `200` with `"products": []` — **not** a 404. The MCP tool is
+Groups are ordered by product count descending, then category name; products
+within a group by `id`. A flat list is `groups.flatMap(g => g.products)`.
+
+A category with no matches is **omitted entirely**, never returned as an empty
+group — a section header with nothing under it is a UI bug. `category=<slug>`
+narrows to a single group rather than switching shape, so a View never
+branches.
+
+No match at all is `200` with `"groups": []` — **not** a 404. The MCP tool is
 responsible for saying "nothing in this snapshot" rather than "does not exist".
 
 ## `GET /api/v1/categories`

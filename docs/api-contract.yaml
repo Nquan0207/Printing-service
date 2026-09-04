@@ -103,8 +103,16 @@ paths:
       operationId: searchProducts
       description: |
         Backs the `search_products` MCP tool. Filters combine with AND.
-        An empty result is `200` with `products: []` — **not** a 404. Saying
-        "nothing in this snapshot" is the MCP tool's job, not this endpoint's.
+
+        Results are **grouped by category** so the catalog View can render one
+        section per category without regrouping client-side. Groups are ordered
+        by product count descending, then category name; products within a
+        group by `id`. A flat list is `groups.flatMap(g => g.products)`.
+
+        A category with no matches is omitted entirely — never returned as an
+        empty group. No match at all is `200` with `groups: []` — **not** a
+        404. Saying "nothing in this snapshot" is the MCP tool's job, not this
+        endpoint's.
       parameters:
         - name: q
           in: query
@@ -113,12 +121,35 @@ paths:
           example: 紙袋
         - name: category
           in: query
-          description: Top-level category slug.
+          description: |
+            Top-level category slug. Narrows to one group; the grouped shape
+            is unchanged so a View never branches.
           schema: { type: string }
           example: store_supplies
+        - name: min_price
+          in: query
+          description: |
+            Inclusive yen bound. A product matches when **any** of its sizes
+            has a `unit_price_jpy` in range — so "under ¥1000" still finds a
+            product whose S is ¥800 even though its L is ¥1500.
+          schema: { type: integer, minimum: 0 }
+          example: 100
+        - name: max_price
+          in: query
+          description: Inclusive yen bound; same any-size rule as `min_price`.
+          schema: { type: integer, minimum: 0 }
+          example: 1000
         - name: limit
           in: query
+          description: Maximum products in total, across all groups.
           schema: { type: integer, minimum: 1, maximum: 100, default: 20 }
+        - name: per_category
+          in: query
+          description: |
+            Maximum products within each group. Use it for a browse view that
+            shows a few cards per category rather than filling one group.
+          schema: { type: integer, minimum: 1, maximum: 50 }
+          example: 4
       responses:
         "200":
           description: Matching products.
@@ -497,17 +528,74 @@ components:
           - { id: 36, size_name: L, price_adjustment_jpy: 30, unit_price_jpy: 198 }
         images: [/media/products/158/ab12cd34ef56.jpg]
 
-    ProductList:
+    CategoryGroup:
       type: object
-      required: [products, count]
+      required: [category, products, count]
+      description: One rendered section of the catalog View.
       properties:
+        category: { $ref: "#/components/schemas/Category" }
         products:
           type: array
+          description: Ordered by `id`. Never empty — empty groups are omitted.
           items: { $ref: "#/components/schemas/Product" }
         count:
           type: integer
-          description: Number of products returned.
-          example: 20
+          description: Products in this group.
+          example: 4
+
+    ProductList:
+      type: object
+      required: [groups, count]
+      properties:
+        groups:
+          type: array
+          description: |
+            Ordered by product count descending, then category name.
+            Empty when nothing matched.
+          items: { $ref: "#/components/schemas/CategoryGroup" }
+        count:
+          type: integer
+          description: Total products across all groups.
+          example: 12
+      example:
+        groups:
+          - category: { id: 3, slug: store_supplies, name: 店舗用品 }
+            count: 2
+            products:
+              - id: 12
+                name: 手提げ紙袋
+                brand: ラクスル
+                category: { id: 3, slug: store_supplies, name: 店舗用品 }
+                base_price_jpy: 168
+                sizes:
+                  - { id: 34, size_name: S, price_adjustment_jpy: 0, unit_price_jpy: 168 }
+                  - { id: 35, size_name: M, price_adjustment_jpy: 18, unit_price_jpy: 186 }
+                  - { id: 36, size_name: L, price_adjustment_jpy: 30, unit_price_jpy: 198 }
+                images: [/media/products/158/ab12cd34ef56.jpg]
+              - id: 19
+                name: OPP袋
+                brand: ラクスル
+                category: { id: 3, slug: store_supplies, name: 店舗用品 }
+                base_price_jpy: 9
+                sizes:
+                  - { id: 51, size_name: S, price_adjustment_jpy: 0, unit_price_jpy: 9 }
+                  - { id: 52, size_name: M, price_adjustment_jpy: 6, unit_price_jpy: 15 }
+                  - { id: 53, size_name: L, price_adjustment_jpy: 16, unit_price_jpy: 25 }
+                images: [/media/products/352/0592d9ac4690.jpg]
+          - category: { id: 7, slug: daily_life_goods, name: 日用品・生活雑貨 }
+            count: 1
+            products:
+              - id: 44
+                name: ウェットティッシュ
+                brand: ラクスル
+                category: { id: 7, slug: daily_life_goods, name: 日用品・生活雑貨 }
+                base_price_jpy: 210
+                sizes:
+                  - { id: 88, size_name: S, price_adjustment_jpy: 0, unit_price_jpy: 210 }
+                  - { id: 89, size_name: M, price_adjustment_jpy: 95, unit_price_jpy: 305 }
+                  - { id: 90, size_name: L, price_adjustment_jpy: 240, unit_price_jpy: 450 }
+                images: [/media/products/771/c4d5e6f70819.jpg]
+        count: 3
 
     QuoteRequest:
       type: object
