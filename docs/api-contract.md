@@ -277,7 +277,11 @@ dead option.
 }
 ```
 
-`subtotal = unit_price × quantity`. The source site prices in quantity tiers,
+`subtotal = unit_price × quantity`, refused with `400 invalid_request` if it
+would exceed 2,147,483,647: money lands in `INTEGER` columns, so an oversized
+quantity fails here rather than on `INSERT` at checkout.
+
+The source site prices in quantity tiers,
 but the schema stores one price per size, so **there is no volume discount** —
 `notes` says so out loud, and the MCP tool should surface it rather than let a
 model imply a real quote.

@@ -209,6 +209,10 @@ paths:
         The source site prices in quantity tiers, but the schema stores one
         price per size, so **there is no volume discount**. `notes` says so
         explicitly — surface it rather than letting a model imply a real quote.
+
+        `400 invalid_request` if the subtotal would exceed 2,147,483,647 —
+        money lands in INTEGER columns, so an oversized quantity is refused
+        here rather than failing on INSERT at checkout.
       requestBody:
         required: true
         content:
