@@ -1,4 +1,16 @@
 import { useState, type FormEvent } from "react";
+import {
+  Alert,
+  Button,
+  Center,
+  Chip,
+  Group,
+  Paper,
+  Stack,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
 import type { User } from "../lib/api";
 
 type Props = {
@@ -28,56 +40,70 @@ export default function Login({ onLogin, shopEnabled }: Props) {
   }
 
   return (
-    <div className="login">
-      <form onSubmit={submit}>
-        <h1>
-          RAKSUL <span>Stockroom</span>
-        </h1>
-        <p className="lede">
-          Enter an email to continue. Unknown addresses create a new account.
-        </p>
+    <Center mih="100vh" p="md">
+      <Paper component="form" onSubmit={submit} p="xl" radius="lg" w="100%" maw={420} shadow="sm">
+        <Stack gap="md">
+          <div>
+            <Title order={2}>
+              RAKSUL{" "}
+              <Text span c="raksul" fw={500} inherit>
+                Stockroom
+              </Text>
+            </Title>
+            <Text c="dimmed" size="sm" mt={4}>
+              Enter an email to continue. Unknown addresses create a new account.
+            </Text>
+          </div>
 
-        <label>
-          Email
-          <input
+          <TextInput
+            label="Email"
             type="email"
             required
             value={email}
-            onChange={(e) => setEmail(e.target.value)}
+            onChange={(e) => setEmail(e.currentTarget.value)}
             placeholder="you@example.com"
           />
-        </label>
-        <label>
-          Name <small>(new accounts only)</small>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Optional" />
-        </label>
+          <TextInput
+            label="Name"
+            description="Used only when creating a new account"
+            value={name}
+            onChange={(e) => setName(e.currentTarget.value)}
+            placeholder="Optional"
+          />
 
-        <button type="submit" disabled={busy}>
-          {busy ? "Signing in…" : "Continue"}
-        </button>
+          <Button type="submit" loading={busy} fullWidth>
+            Continue
+          </Button>
 
-        {error && <p className="error">{error}</p>}
+          {error && (
+            <Alert color="red" variant="light">
+              {error}
+            </Alert>
+          )}
 
-        <div className="suggest">
-          {SUGGESTED.map((s) => (
-            <button key={s} type="button" onClick={() => setEmail(s)}>
-              {s}
-            </button>
-          ))}
-        </div>
+          <Group gap={6}>
+            {SUGGESTED.map((s) => (
+              <Chip key={s} size="xs" checked={email === s} onClick={() => setEmail(s)}>
+                {s.split("@")[0]}
+              </Chip>
+            ))}
+          </Group>
 
-        {!shopEnabled && (
-          <p className="warn">
-            The shop is currently disabled (<code>SHOP_ENABLED=false</code>). Signing in as a
-            non-admin will show <strong>Page not found</strong>.
-          </p>
-        )}
+          {!shopEnabled && (
+            <Alert color="yellow" variant="light" title="Shop is disabled">
+              <Text size="xs">
+                <code>SHOP_ENABLED=false</code>. Signing in as a non-admin will show{" "}
+                <b>Page not found</b>.
+              </Text>
+            </Alert>
+          )}
 
-        <p className="fineprint">
-          No password is taken and nothing is verified — this is a demo user picker, not
-          authentication.
-        </p>
-      </form>
-    </div>
+          <Text size="xs" c="dimmed">
+            No password is taken and nothing is verified — this is a demo user picker, not
+            authentication.
+          </Text>
+        </Stack>
+      </Paper>
+    </Center>
   );
 }

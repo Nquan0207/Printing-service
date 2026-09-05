@@ -1,11 +1,27 @@
 import { useEffect, useState } from "react";
+import {
+  Badge,
+  Button,
+  Group,
+  Paper,
+  Stack,
+  Table,
+  Text,
+  TextInput,
+  Title,
+} from "@mantine/core";
+import { notifications } from "@mantine/notifications";
 import { api, yen, type Order } from "../lib/api";
 
-/** A signed-in customer's own order, looked up by number. */
+const STATUS_COLOR: Record<string, string> = {
+  confirmed: "teal",
+  pending: "yellow",
+  cancelled: "red",
+};
+
 export default function Orders() {
   const [number, setNumber] = useState("");
   const [order, setOrder] = useState<Order | null>(null);
-  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     const last = localStorage.getItem("stockroom.lastOrder");
@@ -13,70 +29,77 @@ export default function Orders() {
   }, []);
 
   async function lookup() {
-    setError(null);
     setOrder(null);
     try {
       const o = await api.order(number.trim());
       setOrder(o);
       localStorage.setItem("stockroom.lastOrder", o.order_number);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Lookup failed");
+      notifications.show({ color: "red", message: e instanceof Error ? e.message : "Lookup failed" });
     }
   }
 
   return (
-    <div className="orders">
-      <h1>Find an order</h1>
-      <div className="lookup">
-        <input
+    <Stack gap="md" maw={860}>
+      <Title order={3}>Find an order</Title>
+      <Group gap="sm">
+        <TextInput
           placeholder="RKS-20260904-0001"
           value={number}
-          onChange={(e) => setNumber(e.target.value)}
+          onChange={(e) => setNumber(e.currentTarget.value)}
           onKeyDown={(e) => e.key === "Enter" && lookup()}
+          w={280}
         />
-        <button onClick={lookup} disabled={!number.trim()}>
+        <Button onClick={lookup} disabled={!number.trim()}>
           Look up
-        </button>
-      </div>
-      {error && <p className="error">{error}</p>}
+        </Button>
+      </Group>
 
       {order && (
-        <article className="order">
-          <header>
-            <h2>{order.order_number}</h2>
-            <span className={`pill ${order.status}`}>{order.status}</span>
-          </header>
-          <p className="sub">
+        <Paper p="lg" radius="md">
+          <Group justify="space-between" mb={4}>
+            <Title order={4} ff="monospace">
+              {order.order_number}
+            </Title>
+            <Badge color={STATUS_COLOR[order.status] ?? "gray"} variant="light">
+              {order.status}
+            </Badge>
+          </Group>
+          <Text size="sm" c="dimmed" mb="md">
             {new Date(order.created_at).toLocaleString()} · {order.shipping_address}
-          </p>
-          <table>
-            <thead>
-              <tr>
-                <th>Product</th>
-                <th>Size</th>
-                <th>Qty</th>
-                <th>Unit</th>
-                <th>Subtotal</th>
-              </tr>
-            </thead>
-            <tbody>
+          </Text>
+
+          <Table striped withRowBorders={false} verticalSpacing="xs">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th>Product</Table.Th>
+                <Table.Th>Size</Table.Th>
+                <Table.Th ta="right">Qty</Table.Th>
+                <Table.Th ta="right">Unit</Table.Th>
+                <Table.Th ta="right">Subtotal</Table.Th>
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
               {order.items.map((i, n) => (
-                <tr key={n}>
-                  <td>{i.product_name}</td>
-                  <td>{i.size_name}</td>
-                  <td>{i.quantity}</td>
-                  <td>{yen(i.unit_price_jpy)}</td>
-                  <td>{yen(i.subtotal_jpy)}</td>
-                </tr>
+                <Table.Tr key={n}>
+                  <Table.Td>{i.product_name}</Table.Td>
+                  <Table.Td>{i.size_name}</Table.Td>
+                  <Table.Td ta="right">{i.quantity}</Table.Td>
+                  <Table.Td ta="right">{yen(i.unit_price_jpy)}</Table.Td>
+                  <Table.Td ta="right">{yen(i.subtotal_jpy)}</Table.Td>
+                </Table.Tr>
               ))}
-            </tbody>
-          </table>
-          <div className="total">
-            <span>Total</span>
-            <strong>{yen(order.total_jpy)}</strong>
-          </div>
-        </article>
+            </Table.Tbody>
+          </Table>
+
+          <Group justify="space-between" mt="md" pt="sm" style={{ borderTop: "1px solid var(--mantine-color-default-border)" }}>
+            <Text c="dimmed">Total</Text>
+            <Text fw={700} fz="lg">
+              {yen(order.total_jpy)}
+            </Text>
+          </Group>
+        </Paper>
       )}
-    </div>
+    </Stack>
   );
 }

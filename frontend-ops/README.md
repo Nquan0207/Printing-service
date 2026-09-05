@@ -73,13 +73,27 @@ Admin routes are gated by `is_admin` on the user row, granted at startup from
 `STOCKROOM_ADMIN_EMAILS`. A non-admin calling them gets `403 forbidden`, and
 the dashboard link is hidden.
 
-## Layout
+## UI
+
+Built on **Mantine 9.6** — one library covering both surfaces, so there is no
+second design system for the dashboard. `@mantine/charts` wraps the same
+recharts the project already depends on, and `theme.ts` defines RAKSUL red as
+the primary colour. Light/dark is a header toggle; Mantine handles the rest.
 
 ```
 src/
+  theme.ts          brand palette + component defaults
   lib/api.ts        typed client; one place unwraps the error envelope
   lib/session.ts    login + localStorage, sets X-Stockroom-User
   pages/            Login, Shop, Orders, Admin, NotFound
-  components/       Charts.tsx (shared palette and axis styling)
-  styles.css        one stylesheet, CSS variables for the palette
+  styles.css        only what Mantine does not cover (product-image blending)
+  postcss.config.cjs  postcss-preset-mantine (required by Mantine)
 ```
+
+The dashboard route is **lazy-loaded**, so the ~132 KB of chart code never
+reaches a shopper:
+
+| Bundle | gzipped | loaded by |
+|---|---|---|
+| `index` | 173 KB | everyone |
+| `Admin` | 132 KB | admins only |
