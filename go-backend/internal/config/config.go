@@ -8,6 +8,7 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 type MinIO struct {
@@ -24,12 +25,19 @@ type Config struct {
 	Addr        string
 	DatabaseURL string
 	MinIO       MinIO
+	// AdminEmails are granted is_admin at startup. Admin is never granted
+	// over HTTP, so the admin surface cannot escalate its own access.
+	AdminEmails []string
+	// ShopEnabled gates the customer-facing home page.
+	ShopEnabled bool
 }
 
 func Load() Config {
 	return Config{
 		Addr:        env("STOCKROOM_ADDR", "127.0.0.1:8080"),
 		DatabaseURL: env("STOCKROOM_DATABASE_URL", "postgresql://raksul:raksul_password@127.0.0.1:5432/stockroom"),
+		AdminEmails: listEnv("STOCKROOM_ADMIN_EMAILS", "admin@stockroom.local"),
+		ShopEnabled: boolEnv("SHOP_ENABLED", true),
 		MinIO: MinIO{
 			Endpoint:  env("MINIO_ENDPOINT", "127.0.0.1:9000"),
 			AccessKey: env("MINIO_ACCESS_KEY", "minioadmin"),
@@ -45,6 +53,17 @@ func env(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func listEnv(key, fallback string) []string {
+	raw := env(key, fallback)
+	var out []string
+	for _, item := range strings.Split(raw, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 func boolEnv(key string, fallback bool) bool {

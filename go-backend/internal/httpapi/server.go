@@ -35,6 +35,18 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("DELETE /api/v1/cart/items/{item_id}", s.DeleteCartItem)
 	mux.HandleFunc("POST /api/v1/orders", s.PlaceOrder)
 	mux.HandleFunc("GET /api/v1/orders/{order_number}", s.GetOrder)
+
+	// Admin surface. Unauthenticated like everything else; grouped under one
+	// prefix so a single middleware can gate it when real auth arrives.
+	mux.HandleFunc("GET /api/v1/admin/stats", s.requireAdmin(s.AdminStats))
+	mux.HandleFunc("GET /api/v1/admin/orders", s.requireAdmin(s.AdminOrders))
+	mux.HandleFunc("PATCH /api/v1/admin/orders/{order_number}", s.requireAdmin(s.AdminUpdateOrder))
+	mux.HandleFunc("GET /api/v1/admin/users", s.requireAdmin(s.AdminUsers))
+	mux.HandleFunc("GET /api/v1/admin/products", s.requireAdmin(s.AdminProducts))
+	mux.HandleFunc("PATCH /api/v1/admin/products/{id}", s.requireAdmin(s.AdminUpdateProduct))
+	mux.HandleFunc("DELETE /api/v1/admin/products/{id}", s.requireAdmin(s.AdminDeleteProduct))
+	mux.HandleFunc("PATCH /api/v1/admin/sizes/{id}", s.requireAdmin(s.AdminUpdateSize))
+
 	mux.HandleFunc("GET /media/{key...}", s.Media)
 	return mux
 }

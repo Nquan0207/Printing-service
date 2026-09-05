@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -48,6 +49,15 @@ func run() error {
 		return err
 	}
 	slog.Info("default user ready", "id", defaultUserID, "email", store.DefaultUserEmail)
+
+	// Admin is granted here and nowhere else -- no HTTP route can hand it out.
+	for _, email := range cfg.AdminEmails {
+		admin, err := db.GrantAdmin(ctx, email)
+		if err != nil {
+			return fmt.Errorf("grant admin %s: %w", email, err)
+		}
+		slog.Info("admin ready", "id", admin.ID, "email", admin.Email)
+	}
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,

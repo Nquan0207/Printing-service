@@ -8,6 +8,9 @@ CREATE TABLE users (
     email VARCHAR(255) NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,
     address TEXT,
+    -- Gates /api/v1/admin/*. Granted at startup from STOCKROOM_ADMIN_EMAILS,
+    -- never by any API call, so the surface cannot escalate its own access.
+    is_admin BOOLEAN NOT NULL DEFAULT FALSE,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

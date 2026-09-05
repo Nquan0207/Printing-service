@@ -15,6 +15,7 @@ const (
 	CodeCartEmpty        = "cart_empty"
 	CodeCartItemNotFound = "cart_item_not_found"
 	CodeOrderNotFound    = "order_not_found"
+	CodeForbidden        = "forbidden"
 	CodeInternal         = "internal"
 )
 

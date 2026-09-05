@@ -47,6 +47,9 @@ type ProductFilter struct {
 	CategorySlug string
 	MinPriceJPY  *int
 	MaxPriceJPY  *int
+	// IncludeInactive is set only by admin views; the shop never sees
+	// deactivated products.
+	IncludeInactive bool
 }
 
 // Categories returns only categories that hold at least one active product,
@@ -79,8 +82,11 @@ func (s *Store) Categories(ctx context.Context) ([]Category, error) {
 // SearchProducts returns active products matching the filter, ordered by id,
 // each with its sizes and image keys loaded.
 func (s *Store) SearchProducts(ctx context.Context, f ProductFilter) ([]Product, error) {
-	where := []string{"p.is_active"}
+	where := []string{}
 	args := []any{}
+	if !f.IncludeInactive {
+		where = append(where, "p.is_active")
+	}
 
 	add := func(clause string, value any) {
 		args = append(args, value)
@@ -115,7 +121,7 @@ func (s *Store) SearchProducts(ctx context.Context, f ProductFilter) ([]Product,
 		       p.base_price_jpy, c.id, c.slug, c.name
 		FROM products p
 		JOIN categories c ON c.id = p.category_id
-		WHERE ` + strings.Join(where, " AND ") + `
+		WHERE ` + joinWhere(where) + `
 		ORDER BY p.id
 		LIMIT ` + strconv.Itoa(maxCatalogRows)
 
@@ -229,4 +235,12 @@ func (s *Store) attachSizesAndImages(ctx context.Context, products []Product) er
 		}
 	}
 	return imageRows.Err()
+}
+
+// joinWhere keeps the SQL valid when every filter is optional.
+func joinWhere(clauses []string) string {
+	if len(clauses) == 0 {
+		return "TRUE"
+	}
+	return strings.Join(clauses, " AND ")
 }

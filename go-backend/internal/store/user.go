@@ -5,6 +5,8 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 )
 
 // DefaultUserEmail is seeded at startup so requests arriving without an
@@ -22,6 +24,7 @@ type User struct {
 	ID      int64
 	Email   string
 	Name    string
+	IsAdmin bool
 	Created bool
 }
 
@@ -67,9 +70,9 @@ func (s *Store) UpsertUser(ctx context.Context, email, name string) (User, error
 		INSERT INTO users (name, email, password_hash)
 		VALUES ($1, $2, $3)
 		ON CONFLICT (email) DO UPDATE SET updated_at = NOW()
-		RETURNING id, email, name, (xmax = 0) AS created`,
+		RETURNING id, email, name, is_admin, (xmax = 0) AS created`,
 		strings.TrimSpace(name), normalized, unusablePasswordHash,
-	).Scan(&out.ID, &out.Email, &out.Name, &out.Created)
+	).Scan(&out.ID, &out.Email, &out.Name, &out.IsAdmin, &out.Created)
 	if err != nil {
 		return User{}, fmt.Errorf("upsert user: %w", err)
 	}
@@ -84,4 +87,36 @@ func (s *Store) EnsureDefaultUser(ctx context.Context) (int64, error) {
 		return 0, err
 	}
 	return user.ID, nil
+}
+
+// IsAdmin reports whether the user may reach /api/v1/admin/*.
+//
+// Read per request rather than cached, so revoking admin takes effect
+// immediately instead of at the next restart.
+func (s *Store) IsAdmin(ctx context.Context, userID int64) (bool, error) {
+	var isAdmin bool
+	err := s.pool.QueryRow(ctx,
+		`SELECT is_admin FROM users WHERE id = $1`, userID).Scan(&isAdmin)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil // unknown user is simply not an admin
+	}
+	if err != nil {
+		return false, fmt.Errorf("check admin: %w", err)
+	}
+	return isAdmin, nil
+}
+
+// GrantAdmin creates the user if needed and marks them admin. Called only at
+// startup from configuration -- no HTTP route can grant admin.
+func (s *Store) GrantAdmin(ctx context.Context, email string) (User, error) {
+	user, err := s.UpsertUser(ctx, email, "")
+	if err != nil {
+		return User{}, err
+	}
+	if _, err := s.pool.Exec(ctx,
+		`UPDATE users SET is_admin = TRUE, updated_at = NOW() WHERE id = $1`, user.ID); err != nil {
+		return User{}, fmt.Errorf("grant admin: %w", err)
+	}
+	user.IsAdmin = true
+	return user, nil
 }

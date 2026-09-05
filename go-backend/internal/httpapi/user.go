@@ -25,6 +25,7 @@ type loginResponse struct {
 	UserID  int64  `json:"user_id"`
 	Email   string `json:"email"`
 	Name    string `json:"name"`
+	IsAdmin bool   `json:"is_admin"`
 	Created bool   `json:"created"`
 }
 
@@ -50,6 +51,7 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		UserID:  user.ID,
 		Email:   user.Email,
 		Name:    user.Name,
+		IsAdmin: user.IsAdmin,
 		Created: user.Created,
 	})
 }
