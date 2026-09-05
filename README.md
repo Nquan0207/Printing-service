@@ -76,9 +76,15 @@ The next enhancement can add a carefully scoped `get_price` refresh policy using
 
 ## MCP server
 
-The read-only MCP adapter exposes `search_products`, `get_product`,
-`list_categories`, and `get_catalog_info`. Every result identifies the database
-as an incomplete, non-real-time snapshot.
+The MCP adapter exposes catalog search plus an embedded, database-backed mock
+storefront. The runtime shopping flow never navigates to RAKSUL or another
+supplier website: product browsing uses only the PostgreSQL snapshot. The
+supplier site is accessed only by the offline crawler.
+
+The mini-app supports a 24-hour local mock session identified by name and email,
+session-owned carts, and an explicit approve-or-reject simulated payment. A
+checkout confirmation expires after 15 minutes. It never asks for a password,
+payment credentials, or moves money.
 
 Start it locally over stdio:
 
@@ -134,39 +140,73 @@ Use one of the following connection methods:
 
 ### Option A: ChatGPT desktop local plugin
 
-1. Get the absolute project path:
+1. Install the official OpenAI Codex CLI with Homebrew:
+
+   ```bash
+   brew install --cask codex
+   "$(brew --prefix)/bin/codex" --version
+   ```
+
+   Do not use `pip install codex`. The PyPI package named `codex` is an
+   unrelated Python application. In particular, an activated virtual
+   environment may put `.venv/bin/codex` before the OpenAI CLI on `PATH`.
+   The commands below use the Homebrew executable explicitly to avoid that
+   name collision.
+
+2. Get the absolute project path:
 
    ```bash
    pwd
    ```
 
-2. Open this repository in ChatGPT Work mode or Codex and run the following
-   prompt. Replace both `<PROJECT_PATH>` values with the output from `pwd`:
+3. Update `plugins/raksul-catalog/.mcp.json` so that `command` points to this
+   computer's `<PROJECT_PATH>/.venv/bin/python` and `PYTHONPATH` is the same
+   `<PROJECT_PATH>`.
+
+4. Register this repository as a local plugin marketplace. Replace
+   `<PROJECT_PATH>` with the output from `pwd`:
+
+   ```bash
+   "$(brew --prefix)/bin/codex" plugin marketplace add "<PROJECT_PATH>"
+   "$(brew --prefix)/bin/codex" plugin marketplace list
+   ```
+
+   The expected marketplace name is `raksul-printing`.
+
+5. Install the plugin and confirm that it is enabled:
+
+   ```bash
+   "$(brew --prefix)/bin/codex" plugin add raksul-catalog@raksul-printing
+   "$(brew --prefix)/bin/codex" plugin list
+   ```
+
+   The expected status is `installed, enabled`.
+
+6. After changing `plugin.json` or `.mcp.json`, update the manifest
+   cachebuster and reinstall:
+
+   ```bash
+   python3 ~/.codex/skills/.system/plugin-creator/scripts/update_plugin_cachebuster.py \
+     "<PROJECT_PATH>/plugins/raksul-catalog"
+   "$(brew --prefix)/bin/codex" plugin add raksul-catalog@raksul-printing
+   ```
+
+7. Restart the ChatGPT desktop app. Open **Plugins Directory**, choose the
+   **Raksul Printing** source, and enable **RAKSUL Catalog**. Start a new chat
+   after installing or updating the plugin.
+
+8. Start a new conversation on a ChatGPT surface that supports embedded MCP
+   Apps and ask:
 
    ```text
-   $plugin-creator create a personal plugin named raksul-catalog and add it to
-   my personal marketplace. Bundle a local stdio MCP server named
-   raksul_catalog with command <PROJECT_PATH>/.venv/bin/python, arguments
-   ["-m", "app.mcp_server.server"], and environment variable
-   PYTHONPATH=<PROJECT_PATH>. Set the display name to RAKSUL Catalog and mark
-   its capability as Read.
+   Render the embedded RAKSUL database storefront here. Do not open any external website.
    ```
 
-3. Confirm that the plugin appears and is enabled:
-
-   ```bash
-   codex plugin list
-   ```
-
-   The expected status is `installed, enabled`. If it is only available, run:
-
-   ```bash
-   codex plugin add raksul-catalog@personal
-   ```
-
-4. Restart the ChatGPT desktop app. Open **Plugins Directory**, choose the
-   **Personal** source, and enable **RAKSUL Catalog**. Start a new chat after
-   installing or updating the plugin.
+   The expected flow is mock sign-in, database product search, cart management,
+   explicit approval or rejection, then a mock receipt or cart retry. The Codex
+   built-in browser is not a storefront fallback; if a client cannot render the
+   `ui://widget/raksul-storefront.html` resource, it should use structured tool
+   results instead of opening the supplier website.
 
 ### Option B: ChatGPT web with Secure MCP Tunnel
 
@@ -217,6 +257,11 @@ not copy another developer's runtime API key into this repository.
    - `get_product`
    - `list_categories`
    - `get_catalog_info`
+   - `open_storefront`
+   - `mock_sign_in`
+   - `get_mock_session`
+   - `create_cart`, `get_cart`, `add_cart_item`, `update_cart_item`, `remove_cart_item`
+   - `create_mock_checkout`, `get_mock_order`, `decide_mock_payment`
 
 The tunnel is suitable for private development and workspace testing. A public
 plugin submission requires a stable public HTTPS MCP endpoint and appropriate
@@ -230,10 +275,37 @@ Start a new chat and try these prompts:
 Use RAKSUL Catalog to show the catalog coverage.
 Use RAKSUL Catalog to list the available categories.
 Use RAKSUL Catalog to find up to five apparel products.
+Render the embedded RAKSUL database storefront here. Do not open any external website.
 ```
 
 Expected catalog values depend on the latest crawl. Every result should state
 that the catalog is an incomplete, non-real-time snapshot.
+
+### Mock storefront flow
+
+The `open_storefront` tool renders `ui://widget/raksul-storefront.html` inside a
+compatible MCP Apps host. Mock-sign-in with a name and email, search for a
+database product, select any required color and size, choose a quantity, and add
+it to the session-owned cart. Continue to mock payment and explicitly select
+**Approve mock payment** or **Reject mock payment**. The 15-minute confirmation
+challenge is validated server-side. Approval creates a stored mock receipt;
+rejection preserves the cart for editing and retry. No real checkout occurs.
+
+After pulling storefront model changes, create the cart, order, mock-customer,
+session-ownership, and confirmation tables:
+
+```bash
+./.venv/bin/python -m app.cli init-db
+```
+
+After changing MCP tools, UI resources, or plugin metadata, update and reinstall
+the local plugin before starting a new chat:
+
+```bash
+python3 ~/.codex/skills/.system/plugin-creator/scripts/update_plugin_cachebuster.py \
+  "$(pwd)/plugins/raksul-catalog"
+"$(brew --prefix)/bin/codex" plugin add raksul-catalog@raksul-printing
+```
 
 ### Troubleshooting
 

@@ -1,21 +1,24 @@
 {
   "name": "raksul-catalog",
-  "version": "0.1.0",
-  "description": "Search a read-only local snapshot of the RAKSUL Apparel catalog.",
+  "version": "0.1.0+codex.20260904173144",
+  "description": "Render a database-backed mock storefront inside ChatGPT with local sign-in, cart, and simulated checkout.",
   "author": {
     "name": "RAKSUL Catalog local developer"
   },
   "interface": {
     "displayName": "RAKSUL Catalog",
-    "shortDescription": "Search a local RAKSUL Apparel snapshot.",
-    "longDescription": "Read-only product search, product details, categories, and catalog coverage for a limited non-real-time RAKSUL Apparel snapshot.",
+    "shortDescription": "Use an embedded database mock storefront.",
+    "longDescription": "An embedded MCP App using only the local PostgreSQL product snapshot, with mock sign-in, session-owned carts, and explicit approve-or-reject simulated payments. Never opens the supplier website.",
     "developerName": "RAKSUL Catalog local developer",
     "category": "Productivity",
-    "capabilities": ["Read"],
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
     "defaultPrompt": [
-      "Show the RAKSUL catalog coverage.",
-      "Search the RAKSUL catalog for apparel.",
-      "List available RAKSUL categories."
+      "Render the embedded RAKSUL database storefront here. Do not open any external website.",
+      "Use the RAKSUL mini-app to mock-sign-in and browse products from PostgreSQL.",
+      "Help me build a mock cart, then ask me explicitly before approving or rejecting payment."
     ]
   },
   "mcpServers": "./.mcp.json"
