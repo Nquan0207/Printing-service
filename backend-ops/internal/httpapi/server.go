@@ -13,10 +13,12 @@ type Server struct {
 	// defaultUserID answers requests that carry no X-Stockroom-User header,
 	// e.g. from Claude or ChatGPT, which never call login.
 	defaultUserID int64
+	// shopEnabled gates the customer-facing shop in the frontend.
+	shopEnabled bool
 }
 
-func New(s *store.Store, m *media.Store, defaultUserID int64) *Server {
-	return &Server{store: s, media: m, defaultUserID: defaultUserID}
+func New(s *store.Store, m *media.Store, defaultUserID int64, shopEnabled bool) *Server {
+	return &Server{store: s, media: m, defaultUserID: defaultUserID, shopEnabled: shopEnabled}
 }
 
 // Routes builds the mux. Go 1.22+ patterns carry the method, and the
@@ -25,6 +27,7 @@ func New(s *store.Store, m *media.Store, defaultUserID int64) *Server {
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", s.Health)
+	mux.HandleFunc("GET /api/v1/config", s.PublicConfig)
 	mux.HandleFunc("POST /api/v1/login", s.Login)
 	mux.HandleFunc("GET /api/v1/categories", s.ListCategories)
 	mux.HandleFunc("GET /api/v1/products", s.SearchProducts)

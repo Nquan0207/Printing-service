@@ -1,4 +1,4 @@
-"""Writes into the go-backend schema.
+"""Writes into the backend-ops schema.
 
 schema.sql is the single source of truth, so this talks raw SQL through
 psycopg rather than mirroring the DDL in an ORM.
@@ -13,9 +13,9 @@ import psycopg
 
 log = logging.getLogger(__name__)
 
-# crawler/stockroom_crawler/db.py -> repo root -> go-backend/schema.sql
+# crawler/stockroom_crawler/db.py -> repo root -> backend-ops/schema.sql
 SCHEMA_PATH = (
-    Path(__file__).resolve().parents[2] / "go-backend" / "schema.sql"
+    Path(__file__).resolve().parents[2] / "backend-ops" / "schema.sql"
 )
 
 # Crawler-owned tables only; users/cart/orders belong to the Go service.

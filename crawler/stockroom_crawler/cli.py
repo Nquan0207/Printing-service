@@ -10,12 +10,12 @@ from stockroom_crawler.config import TOP_LEVEL_CATEGORIES, Settings
 def build_parser() -> argparse.ArgumentParser:
     root = argparse.ArgumentParser(
         prog="python -m stockroom_crawler.cli",
-        description="Crawl stockroom.raksul.com into the go-backend schema",
+        description="Crawl stockroom.raksul.com into the backend-ops schema",
     )
     root.add_argument("--verbose", action="store_true")
     commands = root.add_subparsers(dest="command", required=True)
 
-    commands.add_parser("init-db", help="apply go-backend/schema.sql (drops tables)")
+    commands.add_parser("init-db", help="apply backend-ops/schema.sql (drops tables)")
     commands.add_parser("categories", help="list the top-level category whitelist")
     commands.add_parser("stats", help="row counts per table")
 

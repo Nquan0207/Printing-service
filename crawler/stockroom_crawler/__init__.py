@@ -1,1 +1,1 @@
-"""Crawler for stockroom.raksul.com -> the go-backend PoC schema."""
+"""Crawler for stockroom.raksul.com -> the backend-ops PoC schema."""

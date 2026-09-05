@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Active work — the stockroom PoC.** [docs/requirement.md](docs/requirement.md) specifies a conversational-commerce PoC over MCP Apps. Its pieces:
 
-- [go-backend/schema.sql](go-backend/schema.sql) — the PoC schema (users, categories, products, product_images, product_sizes, cart_items, orders, order_items). Hand-written DDL, no migration tool; it is the single source of truth.
+- [backend-ops/schema.sql](backend-ops/schema.sql) — the PoC schema (users, categories, products, product_images, product_sizes, cart_items, orders, order_items). Hand-written DDL, no migration tool; it is the single source of truth.
 - [crawler/](crawler/) — a **standalone** Python service that crawls stockroom.raksul.com into that schema and pushes images to MinIO. Own venv, own `requirements.txt`, own `.env`. See [crawler/README.md](crawler/README.md).
 - A Go service (not yet written) will read those tables and proxy `GET /media/{key}` to MinIO; a separate MCP server calls it. That two-process split is a deliberate deviation from requirement.md, which specifies tools running SQL directly in a single MCP server.
 

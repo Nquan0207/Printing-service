@@ -39,7 +39,7 @@ services:
   # unreachable from outside this machine, which is what the contract's
   # loopback-only requirement actually means.
   api:
-    build: ./go-backend
+    build: ./backend-ops
     depends_on:
       postgres:
         condition: service_healthy

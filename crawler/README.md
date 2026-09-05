@@ -73,7 +73,7 @@ the root project's `.venv`, and it needs only psycopg, minio, and requests.
 With the virtualenv active (`(.venv)` in your prompt):
 
 ```bash
-# 1. Create the tables from go-backend/schema.sql (DROPs any existing ones)
+# 1. Create the tables from backend-ops/schema.sql (DROPs any existing ones)
 python -m stockroom_crawler.cli init-db
 
 # 2. Crawl and import (defaults: 70 products across 8 categories)

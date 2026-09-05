@@ -61,7 +61,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.New(db, objects, defaultUserID).Routes(),
+		Handler:           httpapi.New(db, objects, defaultUserID, cfg.ShopEnabled).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 
