@@ -5,7 +5,21 @@ React + Vite SPA for the stockroom PoC: a customer **shop** and an admin
 
 ## Run
 
-The API must be up first (`docker compose up -d` from the repo root).
+### In Docker (the whole stack)
+
+```bash
+docker compose up -d --build      # from the repo root
+open http://127.0.0.1:3000
+```
+
+nginx serves the built SPA and reverse-proxies `/api` and `/media` to the `api`
+service, so the browser sees one origin. `try_files ... /index.html` makes the
+client-side routes (`/shop`, `/admin`, `/orders`) work on a hard refresh or a
+pasted link, which a plain static server would 404.
+
+### Dev server (hot reload)
+
+The API must be up (`docker compose up -d postgres minio api`).
 
 ```bash
 cd frontend-ops
@@ -13,13 +27,21 @@ npm install
 npm run dev          # http://127.0.0.1:5173
 ```
 
-Vite proxies `/api` and `/media` to `http://127.0.0.1:8080`, so the browser
-sees a single origin: no CORS, and the `/media/...` image paths the API returns
-resolve unchanged.
+Vite proxies the same two paths to `http://127.0.0.1:8080`, so behaviour
+matches the container.
 
 ```bash
 npm run build        # typecheck + bundle to dist/
-npm run preview
+```
+
+### Browser check
+
+`render-check.mjs` drives the real app in headless Chrome — sign-in, product
+detail gallery, admin size editing — and fails loudly on console errors:
+
+```bash
+node render-check.mjs                          # against the dev server
+BASE=http://127.0.0.1:3000 node render-check.mjs   # against the container
 ```
 
 ## Pages
@@ -40,7 +62,8 @@ Seeded accounts: `alice@stockroom.local` (customer),
 ## The shop toggle
 
 `SHOP_ENABLED` lives **server-side**, not in the frontend build, so it can be
-flipped with an env var and a restart rather than a rebuild:
+flipped with an env var and a restart of the API alone — the frontend image is
+never rebuilt:
 
 ```bash
 SHOP_ENABLED=false docker compose up -d api     # from the repo root

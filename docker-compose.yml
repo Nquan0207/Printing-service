@@ -61,6 +61,18 @@ services:
       - "127.0.0.1:8080:8080"
     restart: unless-stopped
 
+  # SPA served by nginx, which also reverse-proxies /api and /media to the api
+  # service so the browser sees one origin (no CORS, and the relative /media
+  # paths in product responses resolve unchanged).
+  web:
+    build: ./frontend-ops
+    depends_on:
+      api:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:3000:8080"
+    restart: unless-stopped
+
 volumes:
   raksul_postgres_data:
   raksul_minio_data:

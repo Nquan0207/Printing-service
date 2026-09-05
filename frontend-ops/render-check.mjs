@@ -1,6 +1,6 @@
 import { chromium } from "playwright";
 
-const base = "http://127.0.0.1:5173";
+const base = process.env.BASE ?? "http://127.0.0.1:5173";
 const browser = await chromium.launch({ channel: "chrome" });
 const ctx = await browser.newContext({ viewport: { width: 1440, height: 950 } });
 const page = await ctx.newPage();
