@@ -47,6 +47,10 @@ services:
         condition: service_healthy
     environment:
       STOCKROOM_ADDR: "0.0.0.0:8080"
+      # Gates the customer-facing shop. Flip with SHOP_ENABLED=false in the
+      # host environment, then `docker compose up -d api` -- no rebuild.
+      SHOP_ENABLED: "${SHOP_ENABLED:-true}"
+      STOCKROOM_ADMIN_EMAILS: "${STOCKROOM_ADMIN_EMAILS:-admin@stockroom.local}"
       STOCKROOM_DATABASE_URL: "postgresql://raksul:raksul_password@postgres:5432/stockroom"
       MINIO_ENDPOINT: "minio:9000"
       MINIO_ACCESS_KEY: minioadmin
