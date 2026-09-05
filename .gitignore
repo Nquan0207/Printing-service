@@ -6,3 +6,5 @@ __pycache__/
 
 crawler/.venv/
 crawler/.env
+
+node_modules/

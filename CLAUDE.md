@@ -2,85 +2,162 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Two stacks live here
+## What this is
 
-**Active work — the stockroom PoC.** [docs/requirement.md](docs/requirement.md) specifies a conversational-commerce PoC over MCP Apps. Its pieces:
+A PoC for [docs/requirement.md](docs/requirement.md): conversational commerce over MCP Apps.
+The catalog is real data crawled from **stockroom.raksul.com** (RAKSUL Business Mall — office
+and store supplies, *not* printing), served by a Go API behind a React storefront and admin
+dashboard. The MCP server itself is **not built yet** — it is the remaining piece.
 
-- [backend-ops/schema.sql](backend-ops/schema.sql) — the PoC schema (users, categories, products, product_images, product_sizes, cart_items, orders, order_items). Hand-written DDL, no migration tool; it is the single source of truth.
-- [crawler/](crawler/) — a **standalone** Python service that crawls stockroom.raksul.com into that schema and pushes images to MinIO. Own venv, own `requirements.txt`, own `.env`. See [crawler/README.md](crawler/README.md).
-- A Go service (not yet written) will read those tables and proxy `GET /media/{key}` to MinIO; a separate MCP server calls it. That two-process split is a deliberate deviation from requirement.md, which specifies tools running SQL directly in a single MCP server.
-
-`docker compose up -d` at the root now serves this stack: PostgreSQL 17 with database **`stockroom`** plus MinIO, both bound to `127.0.0.1` only.
-
-**Prior work — the apparel MVP.** [app/](app/) crawls apparel.raksul.com into `raksul_db` via SQLAlchemy and serves a chat-only MCP server. It is a different site, schema, and product. Its database no longer exists in the compose file, so its CLI will fail until `raksul_db` is recreated. Do not extend it for stockroom work.
-
-## Commands (apparel MVP — see crawler/README.md for the stockroom stack)
-
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r requirements.txt
-docker compose up -d                      # PostgreSQL 17 on :5432 (raksul/raksul_password/raksul_db)
-python -m app.cli init-db                 # Base.metadata.create_all — no migration tool
-python -m app.cli crawl [--category SLUG] [--limit N] [--config PATH]
-python -m app.cli stats
-python -m app.cli categories [--industry SLUG]
-python -m app.cli search --query vest --industry food_service --max-price 4000 --limit 5
-python -m app.cli --verbose <command>     # DEBUG logging
+```
+stockroom.raksul.com
+        |  crawler/ (Python, offline, run once)
+        v
+   Postgres + MinIO
+        ^
+        |  backend-ops/ (Go)  — the only process touching SQL or MinIO
+        |
+   +----+--------------------+
+   |                         |
+frontend-ops/ (React)   MCP server (NOT BUILT)
+   via nginx                 |
+                        Claude / ChatGPT / custom chat
 ```
 
-Tests:
+## Run everything
 
 ```bash
-pytest                                    # unit tests only; DB tests skip without TEST_DATABASE_URL
-TEST_DATABASE_URL=postgresql+psycopg://raksul:raksul_password@localhost:5432/raksul_db pytest
-pytest tests/test_parser.py::test_normalized_product_from_jsonld
+docker compose up -d --build     # postgres, minio, api, web
+open http://127.0.0.1:3000       # shop + dashboard
 ```
 
-`tests/test_repository.py` calls `Base.metadata.drop_all` on its target database — point `TEST_DATABASE_URL` at a throwaway DB, never at a database holding a real crawl.
+| Service | Port | Notes |
+|---|---|---|
+| `web` | 127.0.0.1:3000 | nginx serving the SPA, proxies `/api` + `/media` to `api` |
+| `api` | 127.0.0.1:8080 | Go service |
+| `postgres` | 127.0.0.1:5432 | database `stockroom` |
+| `minio` | 127.0.0.1:9000 / 9001 | private bucket `stockroom-media`, console on 9001 |
 
-MCP server:
+**Every port is loopback-bound and must stay that way** — see Identity below.
+Sign in as `alice@stockroom.local` (customer) or `admin@stockroom.local` (admin).
+
+## The four pieces
+
+### `backend-ops/` — Go API
+Owns all SQL and MinIO access. `net/http` stdlib routing, `pgx/v5`, `minio-go/v7` — no
+framework. `internal/store` holds every query and returns domain structs; `internal/httpapi`
+owns JSON shapes and never builds SQL.
 
 ```bash
-./.venv/bin/python -m app.mcp_server.server                            # stdio
-./.venv/bin/python -m app.mcp_server.server --transport streamable-http  # http://127.0.0.1:8000/mcp
-npx @modelcontextprotocol/inspector@latest ./.venv/bin/python -m app.mcp_server.server
+cd backend-ops && go build ./... && go vet ./...
+go run ./cmd/api                 # 127.0.0.1:8080, defaults match docker-compose
 ```
 
-There is no linter or formatter configured; `pyproject.toml` holds only pytest config.
+**There are no Go tests** — they were written, then removed on request. Verification is by
+curl and the browser check below. Nothing guards regressions in the ordering and pricing
+rules listed under Gotchas.
 
-## Architecture
+### `frontend-ops/` — React + Vite + Mantine 9
+Shop (`/shop`), order lookup (`/orders`), admin dashboard (`/admin`). `/` redirects by role:
+admins land on the dashboard, customers on the shop. The dashboard route is lazy-loaded so
+its ~132 KB of chart code never reaches a shopper.
 
-Layers, each depending only on the one below it:
+```bash
+cd frontend-ops && npm run dev            # 127.0.0.1:5173, proxies to :8080
+node render-check.mjs                     # headless Chrome check, fails on console errors
+BASE=http://127.0.0.1:3000 node render-check.mjs   # against the container
+```
 
-`app/cli.py` and `app/mcp_server/` → `app/services/product_service.py` → `app/repositories/product_repository.py` → `app/database/models.py` → PostgreSQL. The crawler (`app/crawler/`) writes into the same repository.
+`render-check.mjs` is the closest thing to a test suite: it signs in as both roles, opens the
+product gallery, edits a size price, and reports console errors. **Use it after UI changes** —
+curl cannot execute JS, so `GET /` only ever returns an empty `<div id="root">`.
 
-The service layer is the read boundary: it accepts only keyword filters and forwards them to repository methods, so callers can never pass SQL. Both the CLI and the MCP tool handlers construct `ProductService(ProductRepository(session))` inside a `session_scope()` block.
+### `crawler/` — Python, standalone
+Populates the catalog. Own venv, own `requirements.txt`, own `.env`; shares nothing with the
+rest. Runs **once, offline** — nothing at request time depends on it.
+See [crawler/README.md](crawler/README.md).
 
-Crawl is two-stage. Stage A ([discovery.py](app/crawler/discovery.py)) fetches each enabled category page and extracts links matching `/(work|clinic|food|casual)-uniform/products/<digits>`, canonicalizing to scheme+path with query and fragment stripped, then deduplicating. Stage B ([parser.py](app/crawler/parser.py)) fetches each product page and prefers Product JSON-LD (including `@graph`), falling back to OpenGraph meta, then `<h1>`, then page text; the URL supplies `source_product_id`. `printing_available` is only set to `True` when the page text contains 印刷 or プリント — it is never set to `False`. Colors, sizes, and stock are left empty/`NULL` rather than inferred.
+```bash
+cd crawler && source .venv/bin/activate
+python -m stockroom_crawler.cli crawl     # defaults: 70 products across 8 categories
+```
 
-[runner.py](app/crawler/runner.py) enforces the caps: a per-category `max_products`, a global `remaining` budget, and a cross-category `seen` URL set so the same product is not fetched twice. Failures are logged and counted in `CrawlSummary`, never raised.
+### `docs/api-contract.md` + `.yaml`
+The frozen interface between the Go service and the future MCP server. The markdown holds the
+**rationale**; the YAML (OpenAPI 3.1, validated) holds the **exact shapes**. If they disagree,
+the markdown is the intent and the YAML is the bug. Read the markdown's six derivation rules
+before adding an endpoint.
 
-## Things that will bite you
+## Identity — deliberately not authentication
 
-- **`.env.example` is referenced by the README but does not exist in the repo.** `DATABASE_URL` is required and raises at `make_engine()` if unset. Create `.env` by hand (it is gitignored).
-- **`MAX_PRODUCTS_TOTAL` and `REQUEST_DELAY_SECONDS` are module-level constants in [config.py](app/crawler/config.py) read at import time, before `load_dotenv()` runs in [connection.py](app/database/connection.py).** Setting them in `.env` has no effect through the CLI; export them in the shell instead. `MAX_PRODUCTS_PER_CATEGORY` is read inside `load_categories()` and so does work from `.env`.
-- **Upsert preserves existing data.** [`ProductRepository.upsert`](app/repositories/product_repository.py) drops `None` values from the `ON CONFLICT (product_url) DO UPDATE` set clause (except `colors`/`sizes`), so a later parse that fails to find a description will not blank the stored one. Price history rows are appended only on insert or an actual price change.
-- **`robots.txt` failure is treated as denial.** `HttpClient.robots_allowed` returns `False` if robots cannot be read, which aborts the crawl — intentional, not a bug.
-- **`categories.json` is the crawl whitelist.** Each entry needs a URL reached through RAKSUL's own navigation, unique `industry`/`category` slugs, and a small `max_products`. `--category` matches the `category` slug, which is not unique across industries (`t_shirts` appears twice), so it selects every industry using that slug.
-- **The README's Architecture section says there is no MCP server yet; that is stale** — [app/mcp_server/](app/mcp_server/) exists and is described further down the same README. The root [README.md](README.md) documents only the apparel MVP and predates the stockroom stack entirely.
+`POST /api/v1/login` swaps an email for a `user_id`, creating the user if new. The frontend
+keeps it in `localStorage` and sends it as **`X-Stockroom-User`** on every call. Go reads it in
+one function (`currentUserID` in [user.go](backend-ops/internal/httpapi/user.go)) and every
+query filters on it.
 
-## stockroom stack — things that will bite you
+There are **no sessions, tokens, JWT, OAuth, or password hashing**, and none should be added
+without being asked. `password_hash` holds an unusable sentinel that nothing checks.
 
-- **`/products/{id}` 404s without `?sku=`.** The SKU query parameter is mandatory on stockroom product pages.
-- **Never read prices from the Nuxt payload.** It uses index-based dereferencing, so `"price":181` means *element 181 of a flat array*, not ¥181. Only the schema.org `Product` JSON-LD block has real numbers — that is all [crawler/stockroom_crawler/parser.py](crawler/stockroom_crawler/parser.py) parses.
-- **Prices are tiered and fractional** (`lowPrice` bulk vs `highPrice` at minimum order, values like 916.5). The schema stores one integer, so the crawler keeps `ceil(highPrice)`. There is no quantity model.
-- **A bare L1 category page lists no products** — it is a hub of subcategory tiles. Discovery must walk depth ≥ 2. Only the 16 L1 categories are persisted; products attach to their L1 ancestor.
-- **`init-db` drops every table**, `users` and `orders` included. Use `crawl --reset` to re-import just the catalog.
-- **The crawler is a separate service.** It has its own `crawler/.venv` and does not share the root project's dependencies; it needs only psycopg, minio, and requests. Build that venv with `python3.13` (Homebrew): macOS's `/usr/bin/python3` is 3.9 on LibreSSL, which makes urllib3 v2 print a `NotOpenSSLWarning` on every command.
-- **schema.sql had two defects** now fixed: a `UNIQUE(product_id, display_order)` referencing a column that was never defined, and a trailing comma before `)` in `product_sizes`. Either one makes the whole file fail to execute.
+`requireAdmin` gates `/api/v1/admin/*` on the `is_admin` column, granted at startup from
+`STOCKROOM_ADMIN_EMAILS` and **never over HTTP**. That is *authorization*, not authentication:
+it stops a normal shop user reaching the dashboard, but not anyone who can forge the header —
+they would simply send the admin's id.
 
-## MCP tool contract
+> **This is safe only because every port is loopback-bound.** Publishing `8080` (or `3000`,
+> which proxies to it) turns `X-Stockroom-User` into an open impersonation switch. Never
+> change a compose ports line to `"8080:8080"`.
 
-Every handler in [tools.py](app/mcp_server/tools.py) returns a `scope` block marking the data as an incomplete, non-real-time snapshot, and an empty search returns `status: "no_match_in_current_catalog"` with an explicit message that absence from the snapshot is not absence from RAKSUL. Preserve that framing when adding tools — it is the point of the design, not boilerplate. All tools are annotated read-only and must stay read-only; `get_catalog_info` names `live_stock`, `shipping_fee`, `delivery_date`, `printing_quote`, and `real_time_price` as deliberately unsupported.
+## Gotchas
 
-`app/services/product_service.py` also carries `is_product_stale(product, max_age_hours=24)`, currently unused — it is the intended hook for a future scoped price-refresh policy.
+### Data model
+- **Sizes must be ordered by `price_adjustment_jpy`, never by `size_name`** — alphabetical
+  gives L, M, S. There is no `display_order` column. Images order by `id`.
+- **Price filters match a single size.** `min_price`+`max_price` live in **one** `EXISTS` over
+  `product_sizes`. Split into two clauses, a product whose S is under max and whose L is over
+  min would wrongly match.
+- **Money is `INTEGER` in Postgres** (int32). `quote` and `place_order` refuse totals above
+  2,147,483,647 rather than failing on INSERT.
+- **`order_items` is a snapshot**, copying `product_name`, `size_name`, `unit_price_jpy`. A
+  re-crawl must never rewrite order history.
+- **Admin catalog edits are overwritten by the next crawl** (it upserts on
+  `source_product_id`). `is_active` survives — the crawler never sets it.
+- **The default user's id is not 1.** `BIGSERIAL` advances on conflicting inserts. Resolve it
+  by email; never hard-code.
+
+### Schema
+[backend-ops/schema.sql](backend-ops/schema.sql) is the single source of truth — the crawler's
+`init-db` reads that exact file, so schema changes need no crawler edit. `init-db` **drops
+every table**, including `users` and `orders`; use `crawl --reset` to re-import only the
+catalog.
+
+### Crawler / source site
+- `/products/{id}` **404s without `?sku=`**.
+- **Never read prices from the Nuxt payload** — it uses index-based dereferencing, so
+  `"price":181` means *element 181 of an array*, not ¥181. Only the schema.org `Product`
+  JSON-LD has real numbers.
+- Prices are tiered and fractional; the crawler stores `ceil(highPrice)` (minimum-order price).
+- A bare L1 category page lists no products — discovery must walk depth ≥ 2.
+
+### Frontend / infra
+- **nginx `try_files ... /index.html` is load-bearing.** `/shop`, `/admin`, `/orders` are React
+  routes; without it a hard refresh 404s.
+- The API container binds `0.0.0.0` **inside** the container (Docker cannot route to
+  `127.0.0.1` there); the *published* port is what keeps it loopback-only.
+- `SHOP_ENABLED=false docker compose up -d api` turns the storefront into Page-not-found for
+  customers while admins keep the dashboard. Server-side, so no frontend rebuild.
+- Build the crawler venv with `python3.13` (Homebrew). macOS's `/usr/bin/python3` is 3.9 on
+  LibreSSL and makes urllib3 warn on every command.
+
+## Prior work — ignore for stockroom
+
+[app/](app/) is an earlier MVP crawling **apparel.raksul.com** into a `raksul_db` database via
+SQLAlchemy, with its own chat-only MCP server. Different site, schema, and product. Its
+database is no longer in the compose file, so its CLI will fail. Do not extend it.
+[README.md](README.md) documents only that MVP.
+
+## What's left
+
+The MCP server: five tools (`search_products`, `get_quote`, `add_to_cart`, `place_order`,
+`get_order`), the `ui://` Views, and the **confirm-gate on `place_order`** — requirement.md
+requires it to be reachable only from the confirm View, and the Go service deliberately does
+not enforce that because it cannot see which View called it.
