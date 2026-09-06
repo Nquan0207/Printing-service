@@ -1,4 +1,5 @@
 import { App } from "@modelcontextprotocol/ext-apps";
+import { areaChart, barChart, card, empty, rowChart } from "./charts";
 
 /** Shape returned by GET /api/v1/admin/stats, via the get_dashboard tool. */
 type Stats = {
@@ -9,6 +10,8 @@ type Stats = {
   };
   products_by_category?: { slug: string; name: string; count: number }[];
   orders_by_day?: { date: string; orders: number; revenue_jpy: number }[];
+  top_products?: { product_id: number; product_name: string; quantity: number; revenue_jpy: number }[];
+  price_buckets?: { label: string; count: number }[];
   error?: { code: string; message: string };
 };
 
@@ -17,6 +20,8 @@ const sub = document.getElementById("sub")!;
 const range = document.getElementById("range") as HTMLDivElement;
 
 const yen = (n: number) => "¥" + n.toLocaleString("ja-JP");
+/** "2026-09-06" -> "09-06". The year is in the range selector, not on 90 ticks. */
+const shortDate = (iso: string) => iso.slice(5);
 const esc = (s: string) =>
   s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]!);
 
@@ -47,7 +52,21 @@ function render(stats: Stats) {
     b.setAttribute("aria-pressed", String(Number(b.dataset.days) === days));
   }
   const cats = stats.products_by_category ?? [];
+  const byDay = stats.orders_by_day ?? [];
+  const top = stats.top_products ?? [];
+  const buckets = stats.price_buckets ?? [];
   sub.textContent = `${t.products} products · ${t.categories} categories · last ${days} days`;
+
+  const rows = top
+    .map(
+      (p) => `<tr>
+        <td>${esc(p.product_name)}</td>
+        <td class="num">${p.quantity}</td>
+        <td class="num">${esc(yen(p.revenue_jpy))}</td>
+      </tr>`,
+    )
+    .join("");
+
   out.innerHTML = `<div class="tiles">
     ${tile("Revenue", yen(t.revenue_jpy), "cancelled excluded")}
     ${tile("Orders", t.orders, `${t.cancelled_orders} cancelled`)}
@@ -55,7 +74,44 @@ function render(stats: Stats) {
     ${tile("Users", t.users, `${t.open_cart_lines} open cart lines`)}
     ${tile("Categories", t.categories, cats[0] ? `top: ${cats[0].name}` : undefined)}
     ${tile("Sizes", t.sizes, `${t.images} images`)}
-  </div>`;
+  </div>
+
+  <div class="grids">
+    ${card(
+      "Revenue per day",
+      areaChart(byDay.map((d) => ({ label: shortDate(d.date), value: d.revenue_jpy }))),
+    )}
+    ${card(
+      "Orders per day",
+      barChart(
+        byDay.map((d) => ({
+          label: shortDate(d.date),
+          value: d.orders,
+          hint: `${d.orders} order${d.orders === 1 ? "" : "s"} · ${yen(d.revenue_jpy)}`,
+        })),
+      ),
+    )}
+    ${card(
+      "Products per category",
+      rowChart(cats.map((c) => ({ label: c.name, value: c.count }))),
+    )}
+    ${card(
+      "Unit price distribution",
+      barChart(
+        buckets.map((b) => ({ label: b.label, value: b.count, hint: `${b.count} sizes` })),
+        (n) => String(n),
+        "warn",
+      ),
+    )}
+  </div>
+
+  ${card(
+    "Top products by revenue",
+    rows
+      ? `<table><thead><tr><th>Product</th><th class="num">Units</th><th class="num">Revenue</th></tr></thead>
+         <tbody>${rows}</tbody></table>`
+      : empty("Nothing sold in this range."),
+  )}`;
 }
 
 function readResult(result: unknown): Stats {

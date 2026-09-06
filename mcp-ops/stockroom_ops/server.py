@@ -133,8 +133,17 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="get_dashboard",
         title="Stockroom dashboard",
         description=(
-            "Show the stockroom operations dashboard: catalog size, order counts, "
-            "revenue, and per-category product totals. Read-only."
+            "THE tool for charts, trends and 'how is the shop doing' questions — "
+            "'visualise the data', 'show me some charts', 'revenue over time', "
+            "'what sells best', 'how are orders trending'.\n\n"
+            "Renders an interactive panel: six headline tiles plus five charts — "
+            "revenue per day, orders per day, products per category, unit price "
+            "distribution, and top products by revenue. Hovering any bar, point "
+            "or row shows its exact figure, and 7d/14d/30d/90d buttons change "
+            "the range inside the panel.\n\n"
+            "`days` sets the opening range: 'this week' -> 7, 'this quarter' -> "
+            "90. One call is enough — the user changes the range in the panel. "
+            "Read-only."
         ),
         annotations=read_only(),
         structured_output=True,

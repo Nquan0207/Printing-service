@@ -26,11 +26,28 @@ API and are deliberately not exposed here.
 
 ### `get_dashboard(days)`
 
-*"How is the shop doing?"* — the Overview tab.
+*"How is the shop doing?"*, *"give me some charts to visualise the data"* —
+the Overview tab.
 
-Six stat tiles plus the series behind them: products per category, orders and
-revenue per day (gap-filled, so quiet days render as zero), top products by
-revenue, and a unit-price distribution.
+Six stat tiles and **five charts**, all from one call:
+
+| Chart | Series |
+|---|---|
+| Revenue per day | `orders_by_day.revenue_jpy`, filled line |
+| Orders per day | `orders_by_day.orders`, bars |
+| Products per category | `products_by_category`, horizontal bars |
+| Unit price distribution | `price_buckets`, bars |
+| Top products by revenue | `top_products`, table |
+
+`orders_by_day` is gap-filled, so a quiet day renders as a zero rather than
+vanishing and bending the trend line.
+
+**The charts are hand-rolled inline SVG** — see
+[views/src/charts.ts](../mcp-ops/views/src/charts.ts). A View is inlined into
+one HTML file for the deny-by-default iframe CSP, so recharts + React would
+roughly triple the bundle to draw five simple shapes; the whole chart toolkit
+costs about 6 KB. Tooltips are a native `<title>` per shape: no JS, no
+positioning maths, and nothing that can escape the iframe.
 
 Returns `totals`, `products_by_category`, `orders_by_day`, `top_products`,
 `price_buckets`.
