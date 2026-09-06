@@ -76,10 +76,6 @@ class StockroomApi:
             params["status"] = status
         return await self._request("GET", "/api/v1/admin/orders", params=params)
 
-    async def categories(self) -> dict[str, Any]:
-        """Slugs, names and product counts -- cheap enough to resolve against."""
-        return await self._request("GET", "/api/v1/categories", identify=False)
-
     async def products(
         self,
         query: str | None = None,
@@ -90,7 +86,8 @@ class StockroomApi:
         if query:
             params["q"] = query
         if categories:
-            # The API filters in SQL; one comma-separated value covers any number.
+            # Raw words, not slugs -- the API resolves them. One comma-separated
+            # value covers any number of them.
             params["category"] = ",".join(categories)
         return await self._request("GET", "/api/v1/admin/products", params=params)
 

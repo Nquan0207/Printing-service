@@ -15,6 +15,9 @@ const (
 	defaultLimit = 20
 	maxLimit     = 100
 	maxPerGroup  = 50
+	// maxCatalogLimit is the admin catalog's "no cap" -- the store already
+	// caps how many rows a search returns, well below this.
+	maxCatalogLimit = 10000
 )
 
 type categoryJSON struct {
@@ -53,6 +56,13 @@ type groupJSON struct {
 type productListJSON struct {
 	Groups []groupJSON `json:"groups"`
 	Count  int         `json:"count"`
+	// The slugs the requested words resolved to. Empty means no filter was
+	// applied, so every category is present. A caller renders its filter
+	// controls from this and `groups` -- it never needs the full category list.
+	SelectedCategories []string `json:"selected_categories"`
+	// Requested words that matched no category. Present so "nothing matched"
+	// is distinguishable from "this category is empty".
+	UnmatchedCategories []string `json:"unmatched_categories,omitempty"`
 }
 
 func toCategory(c store.Category) categoryJSON {
@@ -152,17 +162,58 @@ func (s *Server) SearchProducts(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	products, err := s.store.SearchProducts(r.Context(), store.ProductFilter{
-		Query:         strings.TrimSpace(q.Get("q")),
-		CategorySlugs: categoryParams(q),
-		MinPriceJPY:   minPrice,
-		MaxPriceJPY:   maxPrice,
-	})
+	s.catalogResponse(w, r, store.ProductFilter{
+		Query:       strings.TrimSpace(q.Get("q")),
+		MinPriceJPY: minPrice,
+		MaxPriceJPY: maxPrice,
+	}, categoryParams(q), limit, perGroup, false)
+}
+
+// catalogResponse resolves the requested categories, runs the search and
+// writes the grouped result. Shared by the shop and admin catalog endpoints so
+// both accept the same loose category spellings and return the same shape.
+func (s *Server) catalogResponse(
+	w http.ResponseWriter,
+	r *http.Request,
+	filter store.ProductFilter,
+	tokens []string,
+	limit, perGroup int,
+	withDescription bool,
+) {
+	var selected, unmatched []string
+	if len(tokens) > 0 {
+		categories, err := s.store.Categories(r.Context())
+		if err != nil {
+			writeInternal(w, "list categories", err)
+			return
+		}
+		selected, unmatched = resolveCategories(tokens, categories)
+		if len(selected) == 0 {
+			// Every requested category was unknown. Returning the whole catalog
+			// would read as a broken filter, so return nothing and say why.
+			writeJSON(w, http.StatusOK, productListJSON{
+				Groups:              []groupJSON{},
+				SelectedCategories:  []string{},
+				UnmatchedCategories: unmatched,
+			})
+			return
+		}
+		filter.CategorySlugs = selected
+	}
+
+	products, err := s.store.SearchProducts(r.Context(), filter)
 	if err != nil {
 		writeInternal(w, "search products", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, groupByCategory(products, limit, perGroup, false))
+
+	out := groupByCategory(products, limit, perGroup, withDescription)
+	out.SelectedCategories = selected
+	if out.SelectedCategories == nil {
+		out.SelectedCategories = []string{}
+	}
+	out.UnmatchedCategories = unmatched
+	writeJSON(w, http.StatusOK, out)
 }
 
 // groupByCategory builds the rendered sections: groups ordered by product

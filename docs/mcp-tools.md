@@ -16,7 +16,7 @@ API and are deliberately not exposed here.
 |---|---|---|---|
 | `get_dashboard` | `days` (1–365, default 30) | `ui://stockroom/dashboard` | `GET /api/v1/admin/stats` |
 | `list_orders` | `status?`, `limit` (default 50) | `ui://stockroom/orders` | `GET /api/v1/admin/orders` |
-| `list_products` | `q?`, `category?`, `include_inactive` (default true) | `ui://stockroom/catalog` | `GET /api/v1/admin/products` |
+| `list_products` | `categories?`, `q?`, `include_inactive` (default true) | `ui://stockroom/catalog` | `GET /api/v1/admin/products` |
 | `get_product` | `product_id` | `ui://stockroom/product` | `GET /api/v1/products/{id}` |
 | `list_users` | `limit` (default 50) | `ui://stockroom/users` | `GET /api/v1/admin/users` |
 
@@ -46,20 +46,45 @@ email, item count, total, date, status. `status` filters to
 Line items ride along in the payload, so the model can answer "what was in
 order RKS-…" without another call.
 
-### `list_products(q?, category?, include_inactive)`
+### `list_products(categories?, q?, include_inactive)`
 
-*"What do we sell?"*, *"find paper products"* — the Catalog tab.
+*"What do we sell?"*, *"find paper products"*, *"show me files and drinks"* —
+the Catalog tab.
 
-Product id, name, category, base price, and the S/M/L ladder with computed unit
-prices. Includes deactivated products by default — that is the point of an
-admin view — with `is_active` shown per row.
+Products grouped by category: id, name, base price, and the S/M/L ladder with
+computed unit prices. Includes deactivated products by default — that is the
+point of an admin view.
+
+`categories` takes the user's own words, not slugs — `files`, `copy paper`,
+`ファイル` all resolve, in the Go service. Two things make this one HTTP call
+rather than three:
+
+- **The API resolves the words**, so the tool does not fetch the category list
+  first to translate them.
+- **The API returns category-first groups**, so the tool does not regroup, and
+  the panel does not follow up with `get_product` per row.
+
+The response carries only the categories that were asked for. Listing the
+others would mean fetching them, and asking for two categories should cost one
+request for two categories.
+
+`categories` is typed as a **plain string**, deliberately. A union schema
+(`anyOf` array/string/null) makes models omit the argument entirely — which
+presents exactly as "the category filter is broken". A `BeforeValidator` still
+accepts a list, because some hosts send one.
 
 ### `get_product(product_id)`
 
 One product in full: description, brand, all three sizes with unit prices, and
-its images. This has no equivalent tab in the frontend; it exists because a
-model asked *"tell me about product 34"* should not have to dump the whole
-catalog.
+its images. No equivalent tab in the frontend.
+
+**Declared `visibility=["app"]`** — it ships in `tools/list` carrying
+`_meta.ui.visibility`, and a host that honours it offers the tool to Views but
+not to the model. Left visible, the model fanned out one call per product to
+"work around" `list_products` instead of filtering, turning one request into
+dozens. Sharpening the tool descriptions did not stop it; taking it out of the
+model's view did. Descriptions are suggestions; visibility is declared and
+host-enforced.
 
 ### `list_users(limit)`
 
@@ -80,6 +105,12 @@ Id, name, email, admin flag, open cart lines, order count, lifetime spend.
 **Views receive the tool result directly** via `app.ontoolresult` — no second
 fetch. Filters inside a View (a status dropdown, a search box) call
 `app.callServerTool()` and re-render without involving the model.
+
+**One tool call is one backend call.** The Go API returns data already shaped
+for the View — resolved, grouped, sorted, with unit prices computed and image
+URLs built — so no tool fetches a lookup table first or post-processes after.
+Anything the panel can derive from the payload it already has (expanding a row,
+revealing a description) never touches the server at all.
 
 **Money is an integer of yen**, formatted in the View. Sizes are ordered by
 `price_adjustment_jpy`, never alphabetically — that would give L, M, S.

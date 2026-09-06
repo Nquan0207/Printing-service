@@ -9,7 +9,6 @@ type Group = { category: { slug: string; name: string }; count: number; products
 type Payload = {
   groups?: Group[];
   count?: number;
-  available_categories?: { slug: string; name: string; count: number }[];
   selected_categories?: string[];
   unmatched_categories?: string[];
 };
@@ -25,10 +24,7 @@ let query = "";
 /** Rows expanded in place. The payload already carries every product's
  *  description, sizes and images, so drilling in needs no extra tool call. */
 const expanded = new Set<number>();
-/** Reveals the categories filtered out of the chip row. */
-let showAllChips = false;
 let lastGroups: Group[] = [];
-let lastAvailable: Payload["available_categories"] = [];
 
 function detailRow(p: Product) {
   const shots = p.images.length
@@ -78,29 +74,26 @@ function rows(products: Product[]) {
     .join("");
 }
 
-function renderChips(available: Payload["available_categories"]) {
-  const all = available ?? [];
-  // With a filter on, show only the categories in play. The full set is one
-  // click away behind "＋", so narrowing does not strand you.
-  const visible = selected.size && !showAllChips ? all.filter((c) => selected.has(c.slug)) : all;
-
-  const chips = visible
+// Chips come from the groups on screen, nothing more. Listing the categories
+// you did not ask for would mean fetching them, and asking for two categories
+// should cost exactly one request for two categories.
+function renderChips(groups: Group[]) {
+  const chips = groups
     .map(
-      (c) =>
-        `<button data-slug="${esc(c.slug)}" aria-pressed="${selected.has(c.slug)}"
-                 title="${esc(c.slug)}">${esc(c.name)} <span class="muted">${c.count}</span></button>`,
+      (g) =>
+        // Unfiltered, the chips are every category and none reads as pressed:
+        // clicking one narrows to it. Filtered, they are the selection itself,
+        // and clicking one drops it.
+        `<button data-slug="${esc(g.category.slug)}" aria-pressed="${selected.has(g.category.slug)}"
+                 title="${esc(g.category.slug)}">${esc(g.category.name)} <span class="muted">${g.count}</span></button>`,
     )
     .join("");
 
-  const hidden = all.length - visible.length;
-  const more = hidden
-    ? `<button data-more="1" title="Show the other categories">＋${hidden}</button>`
-    : "";
-
   bar.innerHTML = `
     <input id="q" placeholder="Search products…" value="${esc(query)}" />
-    <button data-slug="" aria-pressed="${selected.size === 0}">All</button>
-    ${chips}${more}`;
+    <button data-slug="" aria-pressed="${selected.size === 0}"
+            title="Every category">All</button>
+    ${chips}`;
   bar.hidden = false;
 }
 
@@ -111,16 +104,14 @@ function render(data: Payload & { error?: { code: string; message: string } }) {
   // so doing it the other way round highlights the previous request's
   // categories, which then disagree with the data on screen.
   selected = new Set(data.selected_categories ?? []);
-  lastAvailable = data.available_categories ?? [];
-  // A new result collapses the chip row back to the active selection.
-  showAllChips = false;
-  // The response always carries the full category list, so "＋" can reveal
-  // the rest without another call.
-  renderChips(lastAvailable);
 
   const groups = data.groups ?? [];
   lastGroups = groups;
-  const shown = selected.size ? `${selected.size} of ${(data.available_categories ?? []).length} categories` : "all categories";
+  renderChips(groups);
+
+  const shown = selected.size
+    ? `${groups.length} ${groups.length === 1 ? "category" : "categories"}`
+    : "all categories";
   sub.textContent = `${data.count ?? 0} products · ${shown}`;
 
   if (data.unmatched_categories?.length) {
@@ -162,12 +153,6 @@ async function refetch() {
 bar.addEventListener("click", (e) => {
   const b = (e.target as HTMLElement).closest("button");
   if (!b) return;
-  if (b.dataset.more) {
-    // Pure presentation -- no refetch needed to show more chips.
-    showAllChips = true;
-    renderChips(lastAvailable);
-    return;
-  }
   const slug = b.dataset.slug ?? "";
   if (slug === "") {
     selected.clear(); // "All"

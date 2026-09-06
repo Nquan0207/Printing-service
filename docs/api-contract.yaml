@@ -130,13 +130,21 @@ paths:
         - name: category
           in: query
           description: |
-            Top-level category slugs. Accepts a repeated parameter
+            Categories to keep. Accepts a repeated parameter
             (`?category=a&category=b`), a comma-separated value
             (`?category=a,b`), or the plural spelling `categories` — callers
             reach for all three. Omit for every category.
 
-            Narrows which groups are returned; the grouped shape is unchanged,
-            so a View never branches. An unknown slug simply matches nothing.
+            **Values need not be slugs.** An exact slug wins outright;
+            otherwise the word is matched against slug and display name with
+            case and separators folded, so `copy paper`, `コピー用紙` and
+            `copy_paper_toner` all resolve to the same category. A caller can
+            therefore pass a user's own words without knowing the catalog —
+            which is what removes the "fetch categories first" round trip.
+
+            What resolved comes back as `selected_categories`, what did not as
+            `unmatched_categories`. Narrows which groups are returned; the
+            grouped shape is unchanged, so a View never branches.
           schema: { type: string }
           style: form
           explode: true
@@ -513,8 +521,9 @@ paths:
         - name: category
           in: query
           description: |
-            One or more slugs, same forms as the shop endpoint: repeated,
-            comma-separated, or the plural spelling `categories`.
+            One or more categories, same forms and same loose resolution as the
+            shop endpoint: repeated, comma-separated, or the plural spelling
+            `categories`, and slugs, English words or Japanese names all match.
           schema: { type: string }
           style: form
           explode: true
@@ -879,7 +888,7 @@ components:
 
     ProductList:
       type: object
-      required: [groups, count]
+      required: [groups, count, selected_categories]
       properties:
         groups:
           type: array
@@ -891,6 +900,27 @@ components:
           type: integer
           description: Total products across all groups.
           example: 12
+        selected_categories:
+          type: array
+          description: |
+            The slugs the requested words resolved to. Empty means no filter
+            was applied, so every category is present.
+
+            A caller renders its filter controls from this plus `groups` — it
+            never needs to fetch the category list first. That is the point:
+            asking for two categories costs one request, not two.
+          items: { type: string }
+          example: [files, drinks_food]
+        unmatched_categories:
+          type: array
+          description: |
+            Requested words that matched no category. Present only when
+            non-empty, so "nothing matched" is distinguishable from "this
+            category is empty". When *every* word is unmatched the response is
+            empty rather than the whole catalog — returning everything reads as
+            a broken filter.
+          items: { type: string }
+          example: [nope]
       example:
         groups:
           - category: { id: 3, slug: store_supplies, name: 店舗用品 }

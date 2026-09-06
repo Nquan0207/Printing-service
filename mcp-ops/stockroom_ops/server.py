@@ -17,11 +17,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BeforeValidator, Field
 
 from stockroom_ops.api import ApiError, StockroomApi
-from stockroom_ops.catalog import (
-    available_categories,
-    normalize_tokens,
-    resolve_categories,
-)
+from stockroom_ops.catalog import normalize_tokens
 from stockroom_ops.config import VIEWS_DIR, Settings
 
 log = logging.getLogger(__name__)
@@ -204,8 +200,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
                 description=(
                     "Comma-separated categories to show, e.g. 'files, drinks' or "
                     "'ファイル、ドリンク'. Slugs, English words and Japanese names all "
-                    "match. Leave empty to show every category. Valid values come "
-                    "back as `available_categories`."
+                    "match — you do not need to know the exact category names. "
+                    "Leave empty to show every category."
                 ),
             ),
         ] = "",
@@ -219,36 +215,16 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         ] = True,
     ) -> dict[str, Any]:
         """List products grouped by category, optionally limited to some categories."""
+        # One request. The API resolves the words to slugs, filters in SQL and
+        # returns category-first groups, so there is nothing to fetch first and
+        # nothing to regroup after.
         try:
-            # Categories are resolved here (a model says "copy paper", not a
-            # slug) but filtering happens in SQL: the resolved slugs go to the
-            # API, which returns only the matching rows.
-            known = (await api.categories()).get("categories", [])
-            wanted, unmatched = resolve_categories(categories, known)
-            asked = bool(normalize_tokens(categories))
-
-            if asked and not wanted:
-                # Every requested category was unknown. Returning the whole
-                # catalog reads as "the filter is broken" -- say nothing matched.
-                groups: list[dict[str, Any]] = []
-                count = 0
-            else:
-                # The API returns category-first groups already; no regrouping.
-                data = await api.products(q, sorted(wanted), include_inactive)
-                groups = data.get("groups", [])
-                count = data.get("count", 0)
+            data = await api.products(
+                q, normalize_tokens(categories), include_inactive
+            )
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
-
-        payload: dict[str, Any] = {
-            "groups": groups,
-            "count": count,
-            "available_categories": available_categories(known),
-            "selected_categories": sorted(wanted),
-        }
-        if unmatched:
-            payload["unmatched_categories"] = unmatched
-        return absolute_images(payload, settings.public_api_base)
+        return absolute_images(data, settings.public_api_base)
 
     @apps.tool(
         resource_uri=PRODUCT_URI,

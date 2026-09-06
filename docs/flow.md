@@ -83,7 +83,7 @@ down stdin to the Python process.
 ### 3. Python calls the Go API — as an admin
 
 `mcp-ops` owns no data. It calls the Go service over HTTP
-([api.py](../mcp-ops/stockroom_ops/api.py)):
+([api.py](../mcp-ops/stockroom_ops/api.py)) — **once per tool call**:
 
 ```
 GET /api/v1/admin/stats?days=30
@@ -97,6 +97,13 @@ Every later request carries it.
 Without it, the Go service falls back to its default user — who is **not** an
 admin — and `requireAdmin` in
 [adminauth.go](../backend-ops/internal/httpapi/adminauth.go) returns `403`.
+
+**One call, not two.** `list_products` passes the user's own words —
+`?category=files,drinks`, or `コピー用紙` — straight through; the Go service
+resolves them to slugs against the category list it is already loading. An
+earlier version translated the words in Python, which meant fetching
+`/api/v1/categories` first: a request nobody asked for, on every single call.
+Resolution belongs where the data already is.
 
 ### 4. Go queries Postgres
 

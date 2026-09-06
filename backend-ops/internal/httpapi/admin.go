@@ -156,19 +156,14 @@ func (s *Server) AdminUsers(w http.ResponseWriter, r *http.Request) {
 // endpoint deliberately hides.
 func (s *Server) AdminProducts(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
-	products, err := s.store.SearchProducts(r.Context(), store.ProductFilter{
-		Query:           strings.TrimSpace(q.Get("q")),
-		CategorySlugs:   categoryParams(q),
-		IncludeInactive: q.Get("include_inactive") != "false",
-	})
-	if err != nil {
-		writeInternal(w, "admin products", err)
-		return
-	}
 	// Grouped by category, like GET /api/v1/products: a consumer renders one
 	// section per category without regrouping client-side. Descriptions are
 	// included here (the shop endpoint omits them) because admin views show them.
-	writeJSON(w, http.StatusOK, groupByCategory(products, len(products), 0, true))
+	// maxCatalogLimit stands in for "no cap" -- the store caps rows well below it.
+	s.catalogResponse(w, r, store.ProductFilter{
+		Query:           strings.TrimSpace(q.Get("q")),
+		IncludeInactive: q.Get("include_inactive") != "false",
+	}, categoryParams(q), maxCatalogLimit, 0, true)
 }
 
 type updateProductRequest struct {

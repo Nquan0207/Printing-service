@@ -140,6 +140,14 @@ they would simply send the admin's id.
 - **Price filters match a single size.** `min_price`+`max_price` live in **one** `EXISTS` over
   `product_sizes`. Split into two clauses, a product whose S is under max and whose L is over
   min would wrongly match.
+- **`?category=` takes words, not just slugs.** `resolveCategories` in
+  [categorymatch.go](backend-ops/internal/httpapi/categorymatch.go) tries an exact slug first,
+  then falls back to substring matching over slug and display name with case and separators
+  folded. Exact-first is load-bearing: without it a short slug drags in every longer slug that
+  contains it. This is what lets a caller filter without fetching `/api/v1/categories` first —
+  don't reintroduce that round trip.
+- **`ProductList` carries `selected_categories`** (and `unmatched_categories` when non-empty),
+  never the full category list. A consumer builds its filter chips from the groups it got.
 - **Money is `INTEGER` in Postgres** (int32). `quote` and `place_order` refuse totals above
   2,147,483,647 rather than failing on INSERT.
 - **`order_items` is a snapshot**, copying `product_name`, `size_name`, `unit_price_jpy`. A
