@@ -409,6 +409,14 @@ paths:
         Every filter is optional and they combine with AND, so one request
         answers "pending or cancelled orders over ¥50,000 from the last week".
       parameters:
+        - name: q
+          in: query
+          description: |
+            Free text matched case-insensitively against the order number, the
+            customer's name and their email — the three things someone has in
+            hand when hunting for one order.
+          schema: { type: string }
+          example: carol
         - name: status
           in: query
           description: |
@@ -1208,6 +1216,7 @@ components:
         from the model both land here.
       required: [statuses]
       properties:
+        q: { type: string }
         statuses:
           type: array
           description: Empty means all three.

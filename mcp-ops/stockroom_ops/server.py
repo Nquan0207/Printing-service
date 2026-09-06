@@ -164,15 +164,32 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
             "  'the last week'                  -> days=7\n"
             "  'in August'                      -> date_from='2026-08-01', "
             "date_to='2026-08-31'\n"
-            "  'bulk orders of 20+ items'       -> min_quantity=20\n\n"
+            "  'bulk orders of 20+ items'       -> min_quantity=20\n"
+            "  'carol's orders' / 'order RKS-…0009' -> q='carol' / q='0009'\n\n"
             "Quantity means UNITS ordered (the sum of item quantities), not the "
             "number of distinct products. Omit anything the user did not ask "
-            "for. Read-only."
+            "for.\n\n"
+            "The panel arrives with these filters already filled in, and the "
+            "user can refine them there — by order number, customer, price, "
+            "units, date or status — without another prompt. So call this once "
+            "with what they asked for; do not re-call it to narrow further "
+            "unless they ask you to. Read-only."
         ),
         annotations=read_only(),
         structured_output=True,
     )
     async def list_orders(
+        q: Annotated[
+            LooseText,
+            Field(
+                default="",
+                description=(
+                    "Free text matched against the order number, the customer's "
+                    "name and their email. Use it for 'carol's orders' or "
+                    "'order RKS-20260906-0009'."
+                ),
+            ),
+        ] = "",
         status: Annotated[
             LooseText,
             Field(
@@ -228,6 +245,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
             # so there is nothing to post-process here.
             return await api.orders(
                 limit=max(1, min(int(limit), 200)),
+                q=str(q).strip(),
                 status=",".join(normalize_tokens(status)),
                 days=max(0, int(days)),
                 **{"from": date_from, "to": date_to},

@@ -200,6 +200,9 @@ type AdminOrder struct {
 // OrderFilter narrows an admin order list. Every field is optional; a nil or
 // empty one is simply not part of the WHERE clause.
 type OrderFilter struct {
+	// Query matches the order number, the customer's name, or their email --
+	// the three things someone has in hand when hunting for one order.
+	Query string
 	// Statuses matches any of the given statuses. Empty means all of them --
 	// an admin asking for "pending and cancelled" is one query, not two.
 	Statuses []string
@@ -227,6 +230,10 @@ func (s *Store) AllOrders(ctx context.Context, f OrderFilter) ([]AdminOrder, int
 	add := func(sql string, value any) {
 		args = append(args, value)
 		clauses = append(clauses, fmt.Sprintf(sql, len(args)))
+	}
+	if f.Query != "" {
+		add("(o.order_number ILIKE $%[1]d OR u.name ILIKE $%[1]d OR u.email ILIKE $%[1]d)",
+			"%"+f.Query+"%")
 	}
 	if len(f.Statuses) > 0 {
 		add("o.status = ANY($%d)", f.Statuses)
@@ -257,7 +264,8 @@ func (s *Store) AllOrders(ctx context.Context, f OrderFilter) ([]AdminOrder, int
 
 	var total int
 	if err := s.pool.QueryRow(ctx,
-		`SELECT COUNT(*) FROM orders o WHERE `+where, args...).Scan(&total); err != nil {
+		`SELECT COUNT(*) FROM orders o JOIN users u ON u.id = o.user_id
+		 WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count orders: %w", err)
 	}
 

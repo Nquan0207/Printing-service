@@ -109,7 +109,12 @@ func (s *Server) AdminOrders(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filter := store.OrderFilter{Statuses: statuses, Limit: limit, Offset: offset}
+	filter := store.OrderFilter{
+		Query:    strings.TrimSpace(q.Get("q")),
+		Statuses: statuses,
+		Limit:    limit,
+		Offset:   offset,
+	}
 
 	for _, p := range []struct {
 		key  string
@@ -189,6 +194,9 @@ func appliedJSON(f store.OrderFilter) map[string]any {
 	applied := map[string]any{"statuses": f.Statuses}
 	if f.Statuses == nil {
 		applied["statuses"] = []string{}
+	}
+	if f.Query != "" {
+		applied["q"] = f.Query
 	}
 	if f.MinTotalJPY != nil {
 		applied["min_total"] = *f.MinTotalJPY

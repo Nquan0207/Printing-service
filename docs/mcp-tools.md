@@ -15,7 +15,7 @@ API and are deliberately not exposed here.
 | Tool | Arguments | View | Backed by |
 |---|---|---|---|
 | `get_dashboard` | `days` (1–365, default 30) | `ui://stockroom/dashboard` | `GET /api/v1/admin/stats` |
-| `list_orders` | `status?`, `days?`, `date_from?`, `date_to?`, `min_total?`, `max_total?`, `min_quantity?`, `max_quantity?`, `limit` | `ui://stockroom/orders` | `GET /api/v1/admin/orders` |
+| `list_orders` | `q?`, `status?`, `days?`, `date_from?`, `date_to?`, `min_total?`, `max_total?`, `min_quantity?`, `max_quantity?`, `limit` | `ui://stockroom/orders` | `GET /api/v1/admin/orders` |
 | `list_products` | `categories?`, `q?`, `include_inactive` (default true) | `ui://stockroom/catalog` | `GET /api/v1/admin/products` |
 | `get_product` | `product_id` | `ui://stockroom/product` | `GET /api/v1/products/{id}` |
 | `list_users` | `limit` (default 50) | `ui://stockroom/users` | `GET /api/v1/admin/users` |
@@ -35,7 +35,7 @@ revenue, and a unit-price distribution.
 Returns `totals`, `products_by_category`, `orders_by_day`, `top_products`,
 `price_buckets`.
 
-### `list_orders(status?, days?, date_from?, date_to?, min_total?, max_total?, min_quantity?, max_quantity?, limit)`
+### `list_orders(q?, status?, days?, date_from?, date_to?, min_total?, max_total?, min_quantity?, max_quantity?, limit)`
 
 *"Show me recent orders"*, *"pending and cancelled orders over ¥50,000 from
 last week"* — the Orders tab.
@@ -54,6 +54,8 @@ compound question:
 | "the last week" | `days=7` |
 | "in August" | `date_from='2026-08-01'`, `date_to='2026-08-31'` |
 | "bulk orders of 20+ items" | `min_quantity=20` |
+| "carol's orders" | `q='carol'` |
+| "order RKS-20260906-0009" | `q='0009'` |
 
 **Quantity means units**, the sum of item quantities — not the number of
 distinct lines. An order of two products can easily be twenty things. Both
@@ -68,9 +70,18 @@ Line items ride along in the payload, so the model can answer "what was in
 order RKS-…" without another call.
 
 The response echoes an **`applied`** block — the filter as the server
-understood it. The View renders its controls from that rather than from what it
-believes it sent, so the panel always agrees with the rows beneath it, whether
-the filter came from the prompt or from a click.
+understood it — and the View renders its controls from that rather than from
+what it believes it sent. That is what makes the panel arrive **pre-filled**:
+the prompt's filters and a typed one land in exactly the same place, so the bar
+always agrees with the rows beneath it.
+
+From there the panel is self-sufficient. Order number, customer, price, units,
+date (native pickers) and status can all be refined inside it, each going
+straight back to this tool without the model. So one call per question is
+enough — narrowing is the user's job, not a second tool call's.
+
+The bar is built once and only its *values* update, because re-rendering it on
+each result would take the caret away mid-keystroke.
 
 ### `list_products(categories?, q?, include_inactive)`
 
