@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -196,20 +197,71 @@ type AdminOrder struct {
 	UserEmail string
 }
 
+// OrderFilter narrows an admin order list. Every field is optional; a nil or
+// empty one is simply not part of the WHERE clause.
+type OrderFilter struct {
+	// Statuses matches any of the given statuses. Empty means all of them --
+	// an admin asking for "pending and cancelled" is one query, not two.
+	Statuses []string
+	// Totals are order totals in yen, inclusive.
+	MinTotalJPY *int
+	MaxTotalJPY *int
+	// From is inclusive, To exclusive -- the handler turns a "to" date into
+	// the start of the following day so the named day is included whole.
+	From *time.Time
+	To   *time.Time
+	// Quantity bounds count UNITS ordered (the sum of item quantities), not
+	// the number of distinct lines. "Orders of 20 or more" means twenty things.
+	MinQuantity *int
+	MaxQuantity *int
+
+	Limit  int
+	Offset int
+}
+
 // AllOrders lists every user's orders, newest first.
-func (s *Store) AllOrders(ctx context.Context, status string, limit, offset int) ([]AdminOrder, int, error) {
-	where, args := "TRUE", []any{}
-	if status != "" {
-		args = append(args, status)
-		where = "o.status = $1"
+func (s *Store) AllOrders(ctx context.Context, f OrderFilter) ([]AdminOrder, int, error) {
+	clauses := []string{"TRUE"}
+	args := []any{}
+
+	add := func(sql string, value any) {
+		args = append(args, value)
+		clauses = append(clauses, fmt.Sprintf(sql, len(args)))
 	}
+	if len(f.Statuses) > 0 {
+		add("o.status = ANY($%d)", f.Statuses)
+	}
+	if f.MinTotalJPY != nil {
+		add("o.total_jpy >= $%d", *f.MinTotalJPY)
+	}
+	if f.MaxTotalJPY != nil {
+		add("o.total_jpy <= $%d", *f.MaxTotalJPY)
+	}
+	if f.From != nil {
+		add("o.created_at >= $%d", *f.From)
+	}
+	if f.To != nil {
+		add("o.created_at < $%d", *f.To)
+	}
+	// Units live one table away, so both bounds go through the same scalar
+	// subquery rather than a GROUP BY -- the outer query must stay one row per
+	// order, and an order with no items must still compare as zero.
+	const units = "(SELECT COALESCE(SUM(quantity), 0) FROM order_items WHERE order_id = o.id)"
+	if f.MinQuantity != nil {
+		add(units+" >= $%d", *f.MinQuantity)
+	}
+	if f.MaxQuantity != nil {
+		add(units+" <= $%d", *f.MaxQuantity)
+	}
+	where := strings.Join(clauses, " AND ")
+
 	var total int
 	if err := s.pool.QueryRow(ctx,
 		`SELECT COUNT(*) FROM orders o WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count orders: %w", err)
 	}
 
-	args = append(args, limit, offset)
+	args = append(args, f.Limit, f.Offset)
 	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT o.id, o.order_number, o.status, o.shipping_address, o.total_jpy,
 		       o.created_at, u.id, u.name, u.email

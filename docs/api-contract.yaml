@@ -403,11 +403,64 @@ paths:
       tags: [Admin]
       summary: List every user's orders
       operationId: adminOrders
-      description: Newest first, each with its line items and the customer who placed it.
+      description: |
+        Newest first, each with its line items and the customer who placed it.
+
+        Every filter is optional and they combine with AND, so one request
+        answers "pending or cancelled orders over ¥50,000 from the last week".
       parameters:
         - name: status
           in: query
-          schema: { type: string, enum: [pending, confirmed, cancelled] }
+          description: |
+            Statuses to include, any combination. Accepts a repeated parameter
+            (`?status=a&status=b`), a comma-separated value (`?status=a,b`), or
+            the plural spelling `statuses` — the same forms the catalog's
+            `category` takes. Omit for all three. An unknown status is a `400`
+            rather than an empty list, because it is always a caller bug.
+          schema: { type: string }
+          example: pending,cancelled
+        - name: min_total
+          in: query
+          description: Minimum order total in yen, inclusive.
+          schema: { type: integer, minimum: 0 }
+          example: 50000
+        - name: max_total
+          in: query
+          description: Maximum order total in yen, inclusive.
+          schema: { type: integer, minimum: 0 }
+        - name: min_quantity
+          in: query
+          description: |
+            Minimum **units** ordered — the sum of item quantities, not the
+            number of distinct lines. "Bulk orders of 20+" means twenty things,
+            which an order of two lines can easily be.
+          schema: { type: integer, minimum: 0 }
+          example: 20
+        - name: max_quantity
+          in: query
+          description: Maximum units ordered across the whole order.
+          schema: { type: integer, minimum: 0 }
+        - name: from
+          in: query
+          description: Earliest order date, inclusive.
+          schema: { type: string, format: date }
+          example: "2026-08-01"
+        - name: to
+          in: query
+          description: |
+            Latest order date, **inclusive** — internally the boundary becomes
+            the start of the next day, so `to=2026-09-06` includes everything
+            placed that day. A range that excludes its own end date is a bug
+            report waiting to happen.
+          schema: { type: string, format: date }
+          example: "2026-08-31"
+        - name: days
+          in: query
+          description: |
+            Shorthand for "the last N days", which is how a person asks.
+            Ignored when `from` is given, so the two can never disagree.
+          schema: { type: integer, minimum: 1, maximum: 3650 }
+          example: 7
         - name: limit
           in: query
           schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
@@ -422,7 +475,7 @@ paths:
             application/json:
               schema:
                 type: object
-                required: [orders, total, limit, offset]
+                required: [orders, total, limit, offset, applied]
                 properties:
                   orders:
                     type: array
@@ -430,6 +483,7 @@ paths:
                   total: { type: integer, description: Count before pagination. }
                   limit: { type: integer }
                   offset: { type: integer }
+                  applied: { $ref: "#/components/schemas/AppliedOrderFilter" }
         "400": { $ref: "#/components/responses/BadRequest" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
@@ -960,6 +1014,7 @@ components:
                   - { id: 90, size_name: L, price_adjustment_jpy: 240, unit_price_jpy: 450 }
                 images: [/media/products/771/c4d5e6f70819.jpg]
         count: 3
+        selected_categories: [store_supplies, daily_life_goods]
 
     QuoteRequest:
       type: object
@@ -1126,11 +1181,53 @@ components:
       allOf:
         - $ref: "#/components/schemas/Order"
         - type: object
-          required: [user_id, user_name, user_email]
+          required: [user_id, user_name, user_email, item_count, total_quantity]
           properties:
             user_id: { type: integer, format: int64 }
             user_name: { type: string, example: Alice }
             user_email: { type: string, format: email }
+            item_count:
+              type: integer
+              description: Distinct lines on the order.
+              example: 3
+            total_quantity:
+              type: integer
+              description: |
+                Units ordered — the sum of item quantities, and what
+                `min_quantity`/`max_quantity` filter on. Both numbers are
+                derivable from `items`, but a filter is only trustworthy if the
+                number it filtered on is visible beside the row.
+              example: 24
+
+    AppliedOrderFilter:
+      type: object
+      description: |
+        The filter as the server understood it. Absent keys mean "not
+        filtered", so a consumer renders the filters actually in force rather
+        than the ones it believes it sent — a click inside a View and a call
+        from the model both land here.
+      required: [statuses]
+      properties:
+        statuses:
+          type: array
+          description: Empty means all three.
+          items: { type: string, enum: [pending, confirmed, cancelled] }
+        min_total: { type: integer }
+        max_total: { type: integer }
+        min_quantity: { type: integer }
+        max_quantity: { type: integer }
+        from:
+          type: string
+          format: date
+          description: Also set by `days`, resolved to a concrete date.
+        to:
+          type: string
+          format: date
+          description: The inclusive day the caller asked for, not the exclusive SQL boundary.
+      example:
+        statuses: [pending]
+        min_total: 50000
+        from: "2026-08-30"
 
     AdminUser:
       type: object

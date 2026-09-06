@@ -15,7 +15,7 @@ API and are deliberately not exposed here.
 | Tool | Arguments | View | Backed by |
 |---|---|---|---|
 | `get_dashboard` | `days` (1–365, default 30) | `ui://stockroom/dashboard` | `GET /api/v1/admin/stats` |
-| `list_orders` | `status?`, `limit` (default 50) | `ui://stockroom/orders` | `GET /api/v1/admin/orders` |
+| `list_orders` | `status?`, `days?`, `date_from?`, `date_to?`, `min_total?`, `max_total?`, `min_quantity?`, `max_quantity?`, `limit` | `ui://stockroom/orders` | `GET /api/v1/admin/orders` |
 | `list_products` | `categories?`, `q?`, `include_inactive` (default true) | `ui://stockroom/catalog` | `GET /api/v1/admin/products` |
 | `get_product` | `product_id` | `ui://stockroom/product` | `GET /api/v1/products/{id}` |
 | `list_users` | `limit` (default 50) | `ui://stockroom/users` | `GET /api/v1/admin/users` |
@@ -35,16 +35,42 @@ revenue, and a unit-price distribution.
 Returns `totals`, `products_by_category`, `orders_by_day`, `top_products`,
 `price_buckets`.
 
-### `list_orders(status?, limit)`
+### `list_orders(status?, days?, date_from?, date_to?, min_total?, max_total?, min_quantity?, max_quantity?, limit)`
 
-*"Show me recent orders"*, *"any cancelled orders?"* — the Orders tab.
+*"Show me recent orders"*, *"pending and cancelled orders over ¥50,000 from
+last week"* — the Orders tab.
 
-A table of every user's orders, newest first: order number, customer name and
-email, item count, total, date, status. `status` filters to
-`pending` / `confirmed` / `cancelled`.
+A table of every user's orders, newest first: order number, customer, units
+ordered and line count, total, date, status.
+
+Every filter is optional and they combine with AND, so one call answers a
+compound question:
+
+| The user says | Arguments |
+|---|---|
+| "pending and cancelled orders" | `status='pending, cancelled'` |
+| "orders over ¥50,000" | `min_total=50000` |
+| "cheap orders under ¥5,000" | `max_total=5000` |
+| "the last week" | `days=7` |
+| "in August" | `date_from='2026-08-01'`, `date_to='2026-08-31'` |
+| "bulk orders of 20+ items" | `min_quantity=20` |
+
+**Quantity means units**, the sum of item quantities — not the number of
+distinct lines. An order of two products can easily be twenty things. Both
+numbers ride in every row (`total_quantity` and `item_count`) so the figure the
+filter used is visible beside the row it kept.
+
+`status` is a plain comma-separated string for the same reason `categories` is:
+a union schema makes models omit the argument entirely. An unknown status is a
+clean error naming the word the model used, not an empty table.
 
 Line items ride along in the payload, so the model can answer "what was in
 order RKS-…" without another call.
+
+The response echoes an **`applied`** block — the filter as the server
+understood it. The View renders its controls from that rather than from what it
+believes it sent, so the panel always agrees with the rows beneath it, whether
+the filter came from the prompt or from a click.
 
 ### `list_products(categories?, q?, include_inactive)`
 

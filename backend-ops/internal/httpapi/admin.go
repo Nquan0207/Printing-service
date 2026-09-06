@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -40,6 +41,53 @@ type adminOrderJSON struct {
 	UserID    int64  `json:"user_id"`
 	UserName  string `json:"user_name"`
 	UserEmail string `json:"user_email"`
+	// Both are derivable from `items`, but a filter on units is only
+	// trustworthy if the number it filtered on is visible next to the row.
+	ItemCount     int `json:"item_count"`
+	TotalQuantity int `json:"total_quantity"`
+}
+
+// statusParams collects requested statuses, accepting a repeated parameter,
+// a comma-separated value, or the plural spelling -- the same forms the
+// category filter takes, because callers reach for all three.
+func statusParams(q url.Values) ([]string, bool) {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, key := range []string{"status", "statuses"} {
+		for _, raw := range q[key] {
+			for _, part := range strings.Split(raw, ",") {
+				part = strings.ToLower(strings.TrimSpace(part))
+				if part == "" || seen[part] {
+					continue
+				}
+				if !validStatus(part) {
+					return nil, false
+				}
+				seen[part] = true
+				out = append(out, part)
+			}
+		}
+	}
+	return out, true
+}
+
+// dayParam parses a YYYY-MM-DD boundary. `endOfDay` shifts it to the start of
+// the next day so that `to=2026-09-06` includes everything placed that day --
+// a filter that silently excludes its own end date is a bug report waiting to
+// happen.
+func dayParam(raw string, endOfDay bool) (*time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+	d, err := time.ParseInLocation("2006-01-02", raw, time.UTC)
+	if err != nil {
+		return nil, err
+	}
+	if endOfDay {
+		d = d.AddDate(0, 0, 1)
+	}
+	return &d, nil
 }
 
 func (s *Server) AdminOrders(w http.ResponseWriter, r *http.Request) {
@@ -54,30 +102,115 @@ func (s *Server) AdminOrders(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "offset is out of range.")
 		return
 	}
-	status := strings.TrimSpace(q.Get("status"))
-	if status != "" && !validStatus(status) {
+	statuses, ok := statusParams(q)
+	if !ok {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
 			"status must be pending, confirmed, or cancelled.")
 		return
 	}
 
-	orders, total, err := s.store.AllOrders(r.Context(), status, limit, offset)
+	filter := store.OrderFilter{Statuses: statuses, Limit: limit, Offset: offset}
+
+	for _, p := range []struct {
+		key  string
+		dest **int
+	}{
+		{"min_total", &filter.MinTotalJPY},
+		{"max_total", &filter.MaxTotalJPY},
+		{"min_quantity", &filter.MinQuantity},
+		{"max_quantity", &filter.MaxQuantity},
+	} {
+		v, err := optionalInt(q.Get(p.key))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+				p.key+" must be a non-negative integer.")
+			return
+		}
+		*p.dest = v
+	}
+
+	// `days` is shorthand for "the last N days", which is how a person asks.
+	// An explicit from/to wins, so the two can never quietly disagree.
+	if raw := strings.TrimSpace(q.Get("days")); raw != "" && q.Get("from") == "" {
+		days, err := intParam(raw, 0, 1, 3650)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+				"days must be between 1 and 3650.")
+			return
+		}
+		from := time.Now().UTC().AddDate(0, 0, -days).Truncate(24 * time.Hour)
+		filter.From = &from
+	}
+	if filter.From == nil {
+		if filter.From, err = dayParam(q.Get("from"), false); err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+				"from must be a date as YYYY-MM-DD.")
+			return
+		}
+	}
+	if filter.To, err = dayParam(q.Get("to"), true); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+			"to must be a date as YYYY-MM-DD.")
+		return
+	}
+
+	orders, total, err := s.store.AllOrders(r.Context(), filter)
 	if err != nil {
 		writeInternal(w, "admin orders", err)
 		return
 	}
 	out := make([]adminOrderJSON, 0, len(orders))
 	for _, o := range orders {
+		units := 0
+		for _, it := range o.Items {
+			units += it.Quantity
+		}
 		out = append(out, adminOrderJSON{
-			orderJSON: toOrder(o.Order),
-			UserID:    o.UserID,
-			UserName:  o.UserName,
-			UserEmail: o.UserEmail,
+			orderJSON:     toOrder(o.Order),
+			UserID:        o.UserID,
+			UserName:      o.UserName,
+			UserEmail:     o.UserEmail,
+			ItemCount:     len(o.Items),
+			TotalQuantity: units,
 		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"orders": out, "total": total, "limit": limit, "offset": offset,
+		// Echoed so a consumer can render the filters actually in force rather
+		// than the ones it believes it sent.
+		"applied": appliedJSON(filter),
 	})
+}
+
+// appliedJSON reports the filter as the server understood it. Omitted keys
+// mean "not filtered", so a View can render the active filters without
+// re-deriving them from its own request.
+func appliedJSON(f store.OrderFilter) map[string]any {
+	applied := map[string]any{"statuses": f.Statuses}
+	if f.Statuses == nil {
+		applied["statuses"] = []string{}
+	}
+	if f.MinTotalJPY != nil {
+		applied["min_total"] = *f.MinTotalJPY
+	}
+	if f.MaxTotalJPY != nil {
+		applied["max_total"] = *f.MaxTotalJPY
+	}
+	if f.MinQuantity != nil {
+		applied["min_quantity"] = *f.MinQuantity
+	}
+	if f.MaxQuantity != nil {
+		applied["max_quantity"] = *f.MaxQuantity
+	}
+	if f.From != nil {
+		applied["from"] = f.From.Format("2006-01-02")
+	}
+	if f.To != nil {
+		// Reported as the inclusive day the caller asked for, not the
+		// exclusive boundary used in SQL.
+		applied["to"] = f.To.AddDate(0, 0, -1).Format("2006-01-02")
+	}
+	return applied
 }
 
 type updateOrderStatusRequest struct {

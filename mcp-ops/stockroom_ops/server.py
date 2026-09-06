@@ -42,6 +42,8 @@ CATALOG_URI = "ui://stockroom/catalog"
 PRODUCT_URI = "ui://stockroom/product"
 USERS_URI = "ui://stockroom/users"
 
+STATUSES = ("pending", "confirmed", "cancelled")
+
 
 def read_only() -> ToolAnnotations:
     return ToolAnnotations(
@@ -151,23 +153,89 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="list_orders",
         title="List orders",
         description=(
-            "List customer orders newest first, with line items, totals and status. "
-            "Optionally filter by status (pending, confirmed, cancelled). Read-only."
+            "THE tool for any question about orders. Returns them newest first "
+            "with line items, totals, unit counts and status, and renders as an "
+            "interactive panel showing exactly the filters you passed.\n\n"
+            "Translate the user's words into the arguments — several at once is "
+            "normal:\n"
+            "  'pending and cancelled orders'   -> status='pending, cancelled'\n"
+            "  'orders over ¥50,000'            -> min_total=50000\n"
+            "  'cheap orders under ¥5,000'      -> max_total=5000\n"
+            "  'the last week'                  -> days=7\n"
+            "  'in August'                      -> date_from='2026-08-01', "
+            "date_to='2026-08-31'\n"
+            "  'bulk orders of 20+ items'       -> min_quantity=20\n\n"
+            "Quantity means UNITS ordered (the sum of item quantities), not the "
+            "number of distinct products. Omit anything the user did not ask "
+            "for. Read-only."
         ),
         annotations=read_only(),
         structured_output=True,
     )
-    async def list_orders(status: str | None = None, limit: int = 50) -> dict[str, Any]:
-        """List orders, optionally filtered by status."""
-        if status and status not in ("pending", "confirmed", "cancelled"):
+    async def list_orders(
+        status: Annotated[
+            LooseText,
+            Field(
+                default="",
+                description=(
+                    "Comma-separated statuses to include: pending, confirmed, "
+                    "cancelled. Any combination, e.g. 'pending, cancelled'. "
+                    "Leave empty for all three."
+                ),
+            ),
+        ] = "",
+        days: Annotated[
+            int,
+            Field(default=0, description="Only orders from the last N days. 0 = no limit."),
+        ] = 0,
+        date_from: Annotated[
+            LooseText,
+            Field(default="", description="Earliest order date, YYYY-MM-DD, inclusive."),
+        ] = "",
+        date_to: Annotated[
+            LooseText,
+            Field(default="", description="Latest order date, YYYY-MM-DD, inclusive."),
+        ] = "",
+        min_total: Annotated[
+            int, Field(default=0, description="Minimum order total in yen. 0 = no minimum.")
+        ] = 0,
+        max_total: Annotated[
+            int, Field(default=0, description="Maximum order total in yen. 0 = no maximum.")
+        ] = 0,
+        min_quantity: Annotated[
+            int,
+            Field(default=0, description="Minimum units ordered across the whole order."),
+        ] = 0,
+        max_quantity: Annotated[
+            int,
+            Field(default=0, description="Maximum units ordered across the whole order."),
+        ] = 0,
+        limit: Annotated[int, Field(default=50, description="Rows to return.")] = 50,
+    ) -> dict[str, Any]:
+        """List orders, filtered by status, date, total and units ordered."""
+        bad = [s for s in normalize_tokens(status) if s not in STATUSES]
+        if bad:
+            # Caught here rather than at the API so the message can name the
+            # word the model actually used.
             return {
                 "error": {
                     "code": "invalid_request",
-                    "message": "status must be pending, confirmed or cancelled.",
+                    "message": f"Unknown status {bad[0]!r}. Use pending, confirmed or cancelled.",
                 }
             }
         try:
-            return await api.orders(status, max(1, min(int(limit), 200)))
+            # Filtering happens in SQL and the API echoes back what it applied,
+            # so there is nothing to post-process here.
+            return await api.orders(
+                limit=max(1, min(int(limit), 200)),
+                status=",".join(normalize_tokens(status)),
+                days=max(0, int(days)),
+                **{"from": date_from, "to": date_to},
+                min_total=max(0, int(min_total)),
+                max_total=max(0, int(max_total)),
+                min_quantity=max(0, int(min_quantity)),
+                max_quantity=max(0, int(max_quantity)),
+            )
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
 

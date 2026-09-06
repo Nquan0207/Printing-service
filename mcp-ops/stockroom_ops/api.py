@@ -70,10 +70,15 @@ class StockroomApi:
     async def stats(self, days: int = 30) -> dict[str, Any]:
         return await self._request("GET", "/api/v1/admin/stats", params={"days": days})
 
-    async def orders(self, status: str | None = None, limit: int = 50) -> dict[str, Any]:
+    async def orders(self, limit: int = 50, **filters: Any) -> dict[str, Any]:
+        """List orders. Filters map straight onto the query string; the API
+        resolves and echoes them back as `applied`."""
         params: dict[str, Any] = {"limit": limit}
-        if status:
-            params["status"] = status
+        for key, value in filters.items():
+            # 0 and "" are "not set" -- an order total of exactly 0 is not a
+            # filter anyone means, and neither is an empty date.
+            if value:
+                params[key] = value
         return await self._request("GET", "/api/v1/admin/orders", params=params)
 
     async def products(
