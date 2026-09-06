@@ -9,13 +9,20 @@ from __future__ import annotations
 
 import argparse
 import logging
-from typing import Any
+from typing import Annotated, Any
 
 from mcp.server.apps import Apps, ResourceCsp
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
+from pydantic import Field
 
 from stockroom_ops.api import ApiError, StockroomApi
+from stockroom_ops.catalog import (
+    available_categories,
+    group_by_category,
+    normalize_tokens,
+    resolve_categories,
+)
 from stockroom_ops.config import VIEWS_DIR, Settings
 
 log = logging.getLogger(__name__)
@@ -160,24 +167,70 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="list_products",
         title="List products",
         description=(
-            "List catalog products with their S/M/L sizes and unit prices. "
-            "Optionally search by text or filter to one category. Includes "
-            "deactivated products. Read-only."
+            "List catalog products grouped by category, with their S/M/L sizes and "
+            "unit prices. Pass `categories` to show only certain ones — slugs, "
+            "English words or Japanese names all work, e.g. ['copy paper', 'files'] "
+            "or ['ファイル']. Omit it to show every category. Optionally search with "
+            "`q`. Includes deactivated products. Read-only."
         ),
         annotations=read_only(),
         structured_output=True,
     )
     async def list_products(
-        q: str | None = None,
-        category: str | None = None,
-        include_inactive: bool = True,
+        categories: Annotated[
+            list[str] | str | None,
+            Field(
+                default=None,
+                description=(
+                    "Categories to show. A list is preferred but a single string "
+                    "or a comma-separated string also works. Slugs, English words "
+                    "or Japanese names all match, e.g. [\"files\", \"drinks\"], "
+                    "\"copy paper\", or [\"ファイル\"]. Omit to show every category. "
+                    "Valid values come back as `available_categories`."
+                ),
+            ),
+        ] = None,
+        q: Annotated[
+            str | None,
+            Field(default=None, description="Free-text search over product name and description."),
+        ] = None,
+        include_inactive: Annotated[
+            bool,
+            Field(default=True, description="Include deactivated products."),
+        ] = True,
     ) -> dict[str, Any]:
-        """Search the catalog."""
+        """List products grouped by category, optionally limited to some categories."""
         try:
-            data = await api.products(q, category, include_inactive)
+            # Fetched unfiltered so `available_categories` reflects the whole
+            # catalog -- the View's chips must offer categories the current
+            # selection has filtered out.
+            data = await api.products(q, None, include_inactive)
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
-        return absolute_images(data, settings.public_api_base)
+
+        products = data.get("products", [])
+        wanted, unmatched = resolve_categories(categories, products)
+        asked_for_categories = bool(normalize_tokens(categories))
+        if wanted:
+            selected = [
+                p for p in products if (p.get("category") or {}).get("slug") in wanted
+            ]
+        elif asked_for_categories:
+            # Every requested category was unknown. Returning the whole catalog
+            # here reads as "the filter is broken" -- say nothing matched.
+            selected = []
+        else:
+            selected = products
+        payload: dict[str, Any] = {
+            "groups": group_by_category(selected),
+            "count": len(selected),
+            "available_categories": available_categories(products),
+            "selected_categories": sorted(wanted),
+        }
+        if unmatched:
+            # Tell the model plainly rather than silently returning everything.
+            payload["unmatched_categories"] = unmatched
+        return absolute_images(payload, settings.public_api_base)
 
     @apps.tool(
         resource_uri=PRODUCT_URI,
