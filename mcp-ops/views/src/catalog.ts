@@ -25,6 +25,11 @@ let query = "";
  *  description, sizes and images, so drilling in needs no extra tool call. */
 const expanded = new Set<number>();
 let lastGroups: Group[] = [];
+/** Previous selections, newest last -- what "←" walks back through.
+ *
+ *  This is why the chip row can stay narrow: the way back out of "All" is one
+ *  button, not a list of every category you are not looking at. */
+const history: string[][] = [];
 
 function detailRow(p: Product) {
   const shots = p.images.length
@@ -74,23 +79,24 @@ function rows(products: Product[]) {
     .join("");
 }
 
-// Chips come from the groups on screen, nothing more. Listing the categories
-// you did not ask for would mean fetching them, and asking for two categories
-// should cost exactly one request for two categories.
+// Chips are the categories on screen, nothing more: ask for two, see two.
+// Widening to every category is what "All" is for, and "←" is the way back.
 function renderChips(groups: Group[]) {
   const chips = groups
     .map(
       (g) =>
-        // Unfiltered, the chips are every category and none reads as pressed:
-        // clicking one narrows to it. Filtered, they are the selection itself,
-        // and clicking one drops it.
         `<button data-slug="${esc(g.category.slug)}" aria-pressed="${selected.has(g.category.slug)}"
                  title="${esc(g.category.slug)}">${esc(g.category.name)} <span class="muted">${g.count}</span></button>`,
     )
     .join("");
 
+  const back = history.length
+    ? `<button data-back="1" title="Back to the previous categories">←</button>`
+    : "";
+
   bar.innerHTML = `
     <input id="q" placeholder="Search products…" value="${esc(query)}" />
+    ${back}
     <button data-slug="" aria-pressed="${selected.size === 0}"
             title="Every category">All</button>
     ${chips}`;
@@ -153,6 +159,16 @@ async function refetch() {
 bar.addEventListener("click", (e) => {
   const b = (e.target as HTMLElement).closest("button");
   if (!b) return;
+
+  if (b.dataset.back) {
+    selected = new Set(history.pop());
+    refetch();
+    return;
+  }
+
+  // Every other button changes the filter, so record what it is changing from.
+  history.push([...selected]);
+
   const slug = b.dataset.slug ?? "";
   if (slug === "") {
     selected.clear(); // "All"
@@ -183,5 +199,10 @@ out.addEventListener("click", (e) => {
   paint(lastGroups);
 });
 
-app.ontoolresult = (r) => render(readResult<Payload>(r));
+// A fresh result from the model is a new question; the old trail belongs to
+// the previous one. View-driven refetches keep theirs.
+app.ontoolresult = (r) => {
+  history.length = 0;
+  render(readResult<Payload>(r));
+};
 app.connect();
