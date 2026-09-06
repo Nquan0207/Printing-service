@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A PoC for [docs/requirement.md](docs/requirement.md): conversational commerce over MCP Apps.
 The catalog is real data crawled from **stockroom.raksul.com** (RAKSUL Business Mall — office
 and store supplies, *not* printing), served by a Go API behind a React storefront and admin
-dashboard. The MCP server itself is **not built yet** — it is the remaining piece.
+dashboard. A read-only **MCP Apps server** exists in `mcp-ops/` (admin ops); the
+**commerce** MCP server — the actual demo bar — is still unbuilt.
 
 ```
 stockroom.raksul.com
@@ -19,22 +20,29 @@ stockroom.raksul.com
         |
    +----+--------------------+
    |                         |
-frontend-ops/ (React)   MCP server (NOT BUILT)
-   via nginx                 |
+frontend-ops/ (React)   mcp-ops/ (Python, read-only admin)
+   via nginx            commerce MCP server: NOT BUILT
+                                |
                         Claude / ChatGPT / custom chat
 ```
 
 ## Run everything
 
+Full setup instructions for a human are in [SETUP.md](SETUP.md).
+
 ```bash
-docker compose up -d --build     # postgres, minio, api, web
+docker compose up -d --build     # postgres, minio, api, web, mcp
 open http://127.0.0.1:3000       # shop + dashboard
 ```
+
+The crawler is a one-shot tool behind a compose profile, so it does not start
+with `up`: `docker compose run --rm crawler crawl`.
 
 | Service | Port | Notes |
 |---|---|---|
 | `web` | 127.0.0.1:3000 | nginx serving the SPA, proxies `/api` + `/media` to `api` |
 | `api` | 127.0.0.1:8080 | Go service |
+| `mcp` | 127.0.0.1:3001/mcp | MCP Apps server (Python), read-only admin tools |
 | `postgres` | 127.0.0.1:5432 | database `stockroom` |
 | `minio` | 127.0.0.1:9000 / 9001 | private bucket `stockroom-media`, console on 9001 |
 
@@ -81,6 +89,22 @@ See [crawler/README.md](crawler/README.md).
 cd crawler && source .venv/bin/activate
 python -m stockroom_crawler.cli crawl     # defaults: 70 products across 8 categories
 ```
+
+### `mcp-ops/` — MCP Apps server (Python)
+Read-only admin tools. `mcp.server.apps` provides first-class Apps support:
+`Apps().tool(resource_uri=...)` stamps `_meta.ui.resourceUri`, and
+`add_html_resource` serves `ui://` under `text/html;profile=mcp-app`.
+
+**`mcp` 2.x renamed `FastMCP` to `MCPServer`** — the older `app/mcp_server/`
+pins `mcp>=1.18,<2` and does not match.
+
+`mcp-ops/views/` is **not** a second app: the View runs in the host's sandboxed
+iframe, so it must be browser JS whatever the server is written in. vite +
+`vite-plugin-singlefile` inlines it into one HTML file because the iframe CSP is
+deny-by-default. Rebuild it (`cd views && npm run build`) after changing the UI.
+
+Tools are read-only on purpose: product text is crawled from a live site, so a
+prompt injection could otherwise trigger order cancellation or price edits.
 
 ### `docs/api-contract.md` + `.yaml`
 The frozen interface between the Go service and the future MCP server. The markdown holds the

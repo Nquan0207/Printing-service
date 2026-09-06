@@ -73,6 +73,47 @@ services:
       - "127.0.0.1:3000:8080"
     restart: unless-stopped
 
+  # MCP Apps server (Python). Read-only admin ops tools + ui:// Views that a
+  # host renders in a sandboxed iframe. Talks to `api` over HTTP; never to
+  # Postgres or MinIO directly.
+  mcp:
+    build: ./mcp-ops
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      MCP_HOST: "0.0.0.0"
+      MCP_PORT: "3001"
+      STOCKROOM_API_BASE: "http://api:8080"
+      STOCKROOM_ADMIN_EMAIL: "${STOCKROOM_ADMIN_EMAIL:-admin@stockroom.local}"
+    ports:
+      - "127.0.0.1:3001:3001"
+    restart: unless-stopped
+
+  # One-shot tool, not a service -- `profiles` keeps `docker compose up` from
+  # starting it. Run it explicitly:
+  #   docker compose run --rm crawler init-db
+  #   docker compose run --rm crawler crawl
+  crawler:
+    build:
+      context: .
+      dockerfile: crawler/Dockerfile
+    profiles: ["tools"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      STOCKROOM_DATABASE_URL: "postgresql://raksul:raksul_password@postgres:5432/stockroom"
+      MINIO_ENDPOINT: "minio:9000"
+      MINIO_ACCESS_KEY: minioadmin
+      MINIO_SECRET_KEY: minioadmin
+      MINIO_BUCKET: stockroom-media
+      MINIO_SECURE: "false"
+      CRAWL_MAX_PRODUCTS: "${CRAWL_MAX_PRODUCTS:-70}"
+      CRAWL_MAX_CATEGORIES: "${CRAWL_MAX_CATEGORIES:-8}"
+
 volumes:
   raksul_postgres_data:
   raksul_minio_data:

@@ -1,0 +1,6 @@
+.venv
+__pycache__
+*.pyc
+views/node_modules
+views/dist
+README.md
