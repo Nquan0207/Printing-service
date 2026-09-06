@@ -115,6 +115,7 @@ type adminUserJSON struct {
 	Name      string `json:"name"`
 	Email     string `json:"email"`
 	CreatedAt string `json:"created_at"`
+	IsAdmin   bool   `json:"is_admin"`
 	CartLines int    `json:"cart_lines"`
 	Orders    int    `json:"orders"`
 	SpentJPY  int    `json:"spent_jpy"`
@@ -142,6 +143,7 @@ func (s *Server) AdminUsers(w http.ResponseWriter, r *http.Request) {
 		out = append(out, adminUserJSON{
 			ID: u.ID, Name: u.Name, Email: u.Email,
 			CreatedAt: u.CreatedAt.UTC().Format(time.RFC3339),
+			IsAdmin:   u.IsAdmin,
 			CartLines: u.CartLines, Orders: u.Orders, SpentJPY: u.SpentJPY,
 		})
 	}
@@ -156,7 +158,7 @@ func (s *Server) AdminProducts(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	products, err := s.store.SearchProducts(r.Context(), store.ProductFilter{
 		Query:           strings.TrimSpace(q.Get("q")),
-		CategorySlug:    strings.TrimSpace(q.Get("category")),
+		CategorySlugs:   categoryParams(q),
 		IncludeInactive: q.Get("include_inactive") != "false",
 	})
 	if err != nil {

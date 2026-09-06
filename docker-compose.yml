@@ -50,6 +50,10 @@ services:
       # Gates the customer-facing shop. Flip with SHOP_ENABLED=false in the
       # host environment, then `docker compose up -d api` -- no rebuild.
       SHOP_ENABLED: "${SHOP_ENABLED:-true}"
+      # debug also logs /healthz and /media, which are filtered at info.
+      STOCKROOM_LOG_LEVEL: "${STOCKROOM_LOG_LEVEL:-info}"
+      # "*" allows any origin. Safe only while the port is loopback-bound.
+      STOCKROOM_CORS_ORIGIN: "${STOCKROOM_CORS_ORIGIN:-*}"
       STOCKROOM_ADMIN_EMAILS: "${STOCKROOM_ADMIN_EMAILS:-admin@stockroom.local}"
       STOCKROOM_DATABASE_URL: "postgresql://raksul:raksul_password@postgres:5432/stockroom"
       MINIO_ENDPOINT: "minio:9000"

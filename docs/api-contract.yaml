@@ -45,6 +45,8 @@ info:
     - Image fields are same-origin **paths** (`/media/...`), never MinIO URLs;
       an iframe sandbox cannot fetch an arbitrary host.
     - Unknown query parameters are ignored, not rejected.
+    - Multi-valued query parameters accept a repeated key, a comma-separated
+      value, or both.
     - Timestamps are RFC 3339 UTC.
 
 servers:
@@ -62,6 +64,10 @@ tags:
     description: Persisted in `cart_items`, scoped to the current user.
   - name: Orders
     description: Mock checkout. Writes `orders` and `order_items`.
+  - name: Admin
+    description: |
+      Operations endpoints, gated on `is_admin`. Read paths back the ops
+      dashboard; write paths mutate catalog and order state.
   - name: Media
     description: Image proxy to MinIO.
   - name: Health
@@ -124,10 +130,17 @@ paths:
         - name: category
           in: query
           description: |
-            Top-level category slug. Narrows to one group; the grouped shape
-            is unchanged so a View never branches.
+            Top-level category slugs. Accepts a repeated parameter
+            (`?category=a&category=b`), a comma-separated value
+            (`?category=a,b`), or the plural spelling `categories` — callers
+            reach for all three. Omit for every category.
+
+            Narrows which groups are returned; the grouped shape is unchanged,
+            so a View never branches. An unknown slug simply matches nothing.
           schema: { type: string }
-          example: store_supplies
+          style: form
+          explode: true
+          example: files,drinks_food
         - name: min_price
           in: query
           description: |
@@ -332,6 +345,293 @@ paths:
               schema: { $ref: "#/components/schemas/Order" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/config:
+    get:
+      tags: [Catalog]
+      summary: Public runtime configuration
+      operationId: getConfig
+      description: |
+        What the frontend needs to know before routing. `shop_enabled` is
+        server-side so the storefront can be switched off with an env var and
+        an API restart, without rebuilding the SPA.
+      responses:
+        "200":
+          description: Configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [shop_enabled]
+                properties:
+                  shop_enabled: { type: boolean, example: true }
+
+  /api/v1/admin/stats:
+    get:
+      tags: [Admin]
+      summary: Dashboard totals and chart series
+      operationId: adminStats
+      description: |
+        Everything the ops dashboard renders. `orders_by_day` is gap-filled by
+        `generate_series`, so a day with no orders appears as zero rather than
+        being skipped — a line chart would otherwise misrepresent the trend.
+        Cancelled orders are counted but excluded from revenue.
+      parameters:
+        - name: days
+          in: query
+          description: Length of the daily series.
+          schema: { type: integer, minimum: 1, maximum: 365, default: 30 }
+        - $ref: "#/components/parameters/UserHeader"
+      responses:
+        "200":
+          description: Stats.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Stats" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/admin/orders:
+    get:
+      tags: [Admin]
+      summary: List every user's orders
+      operationId: adminOrders
+      description: Newest first, each with its line items and the customer who placed it.
+      parameters:
+        - name: status
+          in: query
+          schema: { type: string, enum: [pending, confirmed, cancelled] }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - $ref: "#/components/parameters/UserHeader"
+      responses:
+        "200":
+          description: Orders.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [orders, total, limit, offset]
+                properties:
+                  orders:
+                    type: array
+                    items: { $ref: "#/components/schemas/AdminOrder" }
+                  total: { type: integer, description: Count before pagination. }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/admin/orders/{order_number}:
+    patch:
+      tags: [Admin]
+      summary: Change an order's status
+      operationId: adminUpdateOrder
+      description: |
+        Moving an order to `cancelled` removes it from revenue totals but keeps
+        it counted in `orders`.
+      parameters:
+        - name: order_number
+          in: path
+          required: true
+          schema: { type: string }
+          example: RKS-20260904-0001
+        - $ref: "#/components/parameters/UserHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [pending, confirmed, cancelled] }
+      responses:
+        "200":
+          description: The new status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order_number: { type: string }
+                  status: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/users:
+    get:
+      tags: [Admin]
+      summary: List accounts with their activity
+      operationId: adminUsers
+      parameters:
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - $ref: "#/components/parameters/UserHeader"
+      responses:
+        "200":
+          description: Users.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users, total, limit, offset]
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: "#/components/schemas/AdminUser" }
+                  total: { type: integer }
+                  limit: { type: integer }
+                  offset: { type: integer }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/admin/products:
+    get:
+      tags: [Admin]
+      summary: List products including deactivated ones
+      operationId: adminProducts
+      description: |
+        Unlike `GET /api/v1/products`, this returns a **flat list** and includes
+        products with `is_active = false`, which the shop hides.
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: category
+          in: query
+          description: |
+            One or more slugs, same forms as the shop endpoint: repeated,
+            comma-separated, or the plural spelling `categories`.
+          schema: { type: string }
+          style: form
+          explode: true
+          example: files,drinks_food
+        - name: include_inactive
+          in: query
+          description: Send `false` to hide deactivated products.
+          schema: { type: boolean, default: true }
+        - $ref: "#/components/parameters/UserHeader"
+      responses:
+        "200":
+          description: Products.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [products, count]
+                properties:
+                  products:
+                    type: array
+                    items: { $ref: "#/components/schemas/Product" }
+                  count: { type: integer }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/admin/products/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - $ref: "#/components/parameters/UserHeader"
+    patch:
+      tags: [Admin]
+      summary: Update a product
+      operationId: adminUpdateProduct
+      description: |
+        Partial update — omitted fields are left untouched. Edits are
+        **overwritten by the next crawl**, which upserts on
+        `source_product_id`; `is_active` survives because the crawler never
+        sets it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name: { type: string }
+                description: { type: string }
+                base_price_jpy: { type: integer, minimum: 0 }
+                is_active: { type: boolean }
+      responses:
+        "200":
+          description: |
+            The updated product, or `{id, updated}` when it was deactivated and
+            is therefore no longer readable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Product" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Admin]
+      summary: Delete a product
+      operationId: adminDeleteProduct
+      description: |
+        Hard delete. `order_items` references products with `ON DELETE
+        RESTRICT`, so a product that has ever been ordered cannot be removed —
+        deactivate it instead.
+      responses:
+        "204":
+          description: Deleted. Sizes and images cascade.
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The product appears in an order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/admin/sizes/{id}:
+    patch:
+      tags: [Admin]
+      summary: Update a size
+      operationId: adminUpdateSize
+      description: |
+        `price_adjustment_jpy` is a delta from the product's `base_price_jpy`
+        and may be negative. Sizes render in ascending order of this value, so
+        changing it reorders S/M/L.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/UserHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                size_name: { type: string }
+                price_adjustment_jpy: { type: integer }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer, format: int64 }
+                  updated: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /media/{key}:
     get:
       tags: [Media]
@@ -411,6 +711,18 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
           example:
             error: { code: product_not_found, message: "Product 999 does not exist." }
+    Forbidden:
+      description: |
+        The caller is not an administrator. Identity comes from
+        `X-Stockroom-User`; a request without it resolves to the default user,
+        who is deliberately not an admin.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example:
+            error:
+              code: forbidden
+              message: This endpoint requires an administrator account.
     CartResponse:
       description: The full cart after the operation.
       content:
@@ -435,6 +747,7 @@ components:
                 - cart_empty
                 - cart_item_not_found
                 - order_not_found
+                - forbidden
                 - internal
             message:
               type: string
@@ -459,11 +772,17 @@ components:
 
     User:
       type: object
-      required: [user_id, email, name, created]
+      required: [user_id, email, name, is_admin, created]
       properties:
         user_id: { type: integer, format: int64, example: 1 }
         email: { type: string, format: email, example: alice@stockroom.local }
         name: { type: string, example: Alice }
+        is_admin:
+          type: boolean
+          description: |
+            Granted at API startup from `STOCKROOM_ADMIN_EMAILS`, never over
+            HTTP. Gates `/api/v1/admin/*`.
+          example: false
         created:
           type: boolean
           description: True when this call inserted the row.
@@ -476,6 +795,14 @@ components:
         id: { type: integer, format: int64, example: 3 }
         slug: { type: string, example: store_supplies }
         name: { type: string, example: 店舗用品 }
+        product_count:
+          type: integer
+          description: |
+            Active products in this category. Returned by
+            `GET /api/v1/categories` only — omitted where a category is nested
+            inside a product, where it would be noise. Lets a caller build
+            category filters without fetching the catalog.
+          example: 9
 
     Size:
       type: object
@@ -712,6 +1039,88 @@ components:
           type: array
           items: { $ref: "#/components/schemas/OrderItem" }
         created_at: { type: string, format: date-time }
+
+    Stats:
+      type: object
+      required: [totals, products_by_category, orders_by_day, top_products, price_buckets]
+      properties:
+        totals:
+          type: object
+          properties:
+            products: { type: integer, example: 57 }
+            active_products: { type: integer, example: 57 }
+            categories: { type: integer, example: 8 }
+            sizes: { type: integer, example: 171 }
+            images: { type: integer, example: 167 }
+            users: { type: integer, example: 9 }
+            orders: { type: integer, example: 5 }
+            revenue_jpy:
+              type: integer
+              description: Excludes cancelled orders.
+              example: 210384
+            open_cart_lines: { type: integer, example: 3 }
+            cancelled_orders: { type: integer, example: 0 }
+        products_by_category:
+          type: array
+          items:
+            type: object
+            properties:
+              slug: { type: string }
+              name: { type: string }
+              count: { type: integer }
+        orders_by_day:
+          type: array
+          description: One entry per day, gaps filled with zeros.
+          items:
+            type: object
+            properties:
+              date: { type: string, example: "2026-09-04" }
+              orders: { type: integer }
+              revenue_jpy: { type: integer }
+        top_products:
+          type: array
+          items:
+            type: object
+            properties:
+              product_id: { type: [integer, "null"], format: int64 }
+              product_name: { type: string }
+              quantity: { type: integer }
+              revenue_jpy: { type: integer }
+        price_buckets:
+          type: array
+          description: Unit prices bucketed for a distribution chart.
+          items:
+            type: object
+            properties:
+              label: { type: string, example: "1,000-2,999" }
+              count: { type: integer }
+
+    AdminOrder:
+      allOf:
+        - $ref: "#/components/schemas/Order"
+        - type: object
+          required: [user_id, user_name, user_email]
+          properties:
+            user_id: { type: integer, format: int64 }
+            user_name: { type: string, example: Alice }
+            user_email: { type: string, format: email }
+
+    AdminUser:
+      type: object
+      required: [id, name, email, created_at, is_admin, cart_lines, orders, spent_jpy]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string, example: Alice }
+        email: { type: string, format: email }
+        created_at: { type: string, format: date-time }
+        is_admin: { type: boolean }
+        cart_lines:
+          type: integer
+          description: Lines currently in this user's cart.
+        orders: { type: integer }
+        spent_jpy:
+          type: integer
+          description: Lifetime total, excluding cancelled orders.
 
     Health:
       type: object

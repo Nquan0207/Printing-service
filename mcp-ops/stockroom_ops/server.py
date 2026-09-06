@@ -14,7 +14,7 @@ from typing import Annotated, Any
 from mcp.server.apps import Apps, ResourceCsp
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
-from pydantic import Field
+from pydantic import BeforeValidator, Field
 
 from stockroom_ops.api import ApiError, StockroomApi
 from stockroom_ops.catalog import (
@@ -26,6 +26,20 @@ from stockroom_ops.catalog import (
 from stockroom_ops.config import VIEWS_DIR, Settings
 
 log = logging.getLogger(__name__)
+
+def _as_text(value: Any) -> Any:
+    """Accept a list even though the schema advertises a string.
+
+    The schema is a plain string on purpose -- a union makes models omit the
+    argument entirely. But some hosts still send ["files","drinks"], and
+    rejecting that would be a validation error the model cannot see past.
+    """
+    if isinstance(value, (list, tuple, set)):
+        return ", ".join(str(v) for v in value)
+    return value
+
+
+LooseText = Annotated[str, BeforeValidator(_as_text)]
 
 DASHBOARD_URI = "ui://stockroom/dashboard"
 ORDERS_URI = "ui://stockroom/orders"
@@ -167,33 +181,39 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="list_products",
         title="List products",
         description=(
-            "List catalog products grouped by category, with their S/M/L sizes and "
-            "unit prices. Pass `categories` to show only certain ones — slugs, "
-            "English words or Japanese names all work, e.g. ['copy paper', 'files'] "
-            "or ['ファイル']. Omit it to show every category. Optionally search with "
-            "`q`. Includes deactivated products. Read-only."
+            "THE tool for any request about multiple products, including "
+            "'show me category X and Y'. Returns products grouped by category, "
+            "each with its full details: sizes, unit prices and image URLs.\n\n"
+            "Pass the user's own words straight into `categories` — slugs, English "
+            "or Japanese all match, e.g. ['files', 'drinks'] or ['ファイル']. The "
+            "response renders as an interactive panel showing exactly those "
+            "categories.\n\n"
+            "The result is already complete: do NOT follow up with get_product for "
+            "each item. One call answers the whole request. Read-only."
         ),
         annotations=read_only(),
         structured_output=True,
     )
     async def list_products(
+        # A plain string, deliberately. A union schema (anyOf array/string/null)
+        # makes models omit the argument entirely -- which looked exactly like
+        # "the filter is broken".
         categories: Annotated[
-            list[str] | str | None,
+            LooseText,
             Field(
-                default=None,
+                default="",
                 description=(
-                    "Categories to show. A list is preferred but a single string "
-                    "or a comma-separated string also works. Slugs, English words "
-                    "or Japanese names all match, e.g. [\"files\", \"drinks\"], "
-                    "\"copy paper\", or [\"ファイル\"]. Omit to show every category. "
-                    "Valid values come back as `available_categories`."
+                    "Comma-separated categories to show, e.g. 'files, drinks' or "
+                    "'ファイル、ドリンク'. Slugs, English words and Japanese names all "
+                    "match. Leave empty to show every category. Valid values come "
+                    "back as `available_categories`."
                 ),
             ),
-        ] = None,
+        ] = "",
         q: Annotated[
-            str | None,
-            Field(default=None, description="Free-text search over product name and description."),
-        ] = None,
+            LooseText,
+            Field(default="", description="Free-text search over product name and description."),
+        ] = "",
         include_inactive: Annotated[
             bool,
             Field(default=True, description="Include deactivated products."),
@@ -201,42 +221,49 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
     ) -> dict[str, Any]:
         """List products grouped by category, optionally limited to some categories."""
         try:
-            # Fetched unfiltered so `available_categories` reflects the whole
-            # catalog -- the View's chips must offer categories the current
-            # selection has filtered out.
-            data = await api.products(q, None, include_inactive)
+            # Categories are resolved here (a model says "copy paper", not a
+            # slug) but filtering happens in SQL: the resolved slugs go to the
+            # API, which returns only the matching rows.
+            known = (await api.categories()).get("categories", [])
+            wanted, unmatched = resolve_categories(categories, known)
+            asked = bool(normalize_tokens(categories))
+
+            if asked and not wanted:
+                # Every requested category was unknown. Returning the whole
+                # catalog reads as "the filter is broken" -- say nothing matched.
+                products: list[dict[str, Any]] = []
+            else:
+                data = await api.products(q, sorted(wanted), include_inactive)
+                products = data.get("products", [])
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
 
-        products = data.get("products", [])
-        wanted, unmatched = resolve_categories(categories, products)
-        asked_for_categories = bool(normalize_tokens(categories))
-        if wanted:
-            selected = [
-                p for p in products if (p.get("category") or {}).get("slug") in wanted
-            ]
-        elif asked_for_categories:
-            # Every requested category was unknown. Returning the whole catalog
-            # here reads as "the filter is broken" -- say nothing matched.
-            selected = []
-        else:
-            selected = products
         payload: dict[str, Any] = {
-            "groups": group_by_category(selected),
-            "count": len(selected),
-            "available_categories": available_categories(products),
+            "groups": group_by_category(products),
+            "count": len(products),
+            "available_categories": available_categories(known),
             "selected_categories": sorted(wanted),
         }
         if unmatched:
-            # Tell the model plainly rather than silently returning everything.
             payload["unmatched_categories"] = unmatched
         return absolute_images(payload, settings.public_api_base)
 
     @apps.tool(
         resource_uri=PRODUCT_URI,
+        # app-only: the model cannot see or call this. Left visible, it fans
+        # out one call per product to "work around" list_products instead of
+        # filtering. Views can still call it; the model must use list_products.
+        visibility=["app"],
         name="get_product",
         title="Get product",
-        description="Show one product in full: description, sizes, prices and photos. Read-only.",
+        description=(
+            "Details for ONE product, identified by its numeric catalog id.\n\n"
+            "Use this only when the user asks about a single specific product "
+            "('tell me about product 34'). Do NOT call it repeatedly to enumerate "
+            "several products or to expand a category — list_products already "
+            "returns sizes, prices and images for many products in one call. "
+            "Read-only."
+        ),
         annotations=read_only(),
         structured_output=True,
     )

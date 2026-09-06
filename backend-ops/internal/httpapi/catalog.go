@@ -3,6 +3,7 @@ package httpapi
 import (
 	"errors"
 	"net/http"
+	"net/url"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,6 +21,8 @@ type categoryJSON struct {
 	ID   int64  `json:"id"`
 	Slug string `json:"slug"`
 	Name string `json:"name"`
+	// Omitted when nested inside a product, where it would be noise.
+	ProductCount int `json:"product_count,omitempty"`
 }
 
 type sizeJSON struct {
@@ -96,9 +99,33 @@ func (s *Server) ListCategories(w http.ResponseWriter, r *http.Request) {
 	}
 	out := make([]categoryJSON, 0, len(categories))
 	for _, c := range categories {
-		out = append(out, toCategory(c))
+		entry := toCategory(c)
+		entry.ProductCount = c.ProductCount
+		out = append(out, entry)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"categories": out})
+}
+
+// categoryParams collects the requested category slugs.
+//
+// Accepts a repeated parameter (?category=a&category=b), a comma-separated
+// value (?category=a,b), or the plural spelling — callers reach for all three,
+// and rejecting two of them is a papercut with no upside.
+func categoryParams(q url.Values) []string {
+	seen := map[string]bool{}
+	out := []string{}
+	for _, key := range []string{"category", "categories"} {
+		for _, raw := range q[key] {
+			for _, part := range strings.Split(raw, ",") {
+				part = strings.TrimSpace(part)
+				if part != "" && !seen[part] {
+					seen[part] = true
+					out = append(out, part)
+				}
+			}
+		}
+	}
+	return out
 }
 
 func (s *Server) SearchProducts(w http.ResponseWriter, r *http.Request) {
@@ -126,10 +153,10 @@ func (s *Server) SearchProducts(w http.ResponseWriter, r *http.Request) {
 	}
 
 	products, err := s.store.SearchProducts(r.Context(), store.ProductFilter{
-		Query:        strings.TrimSpace(q.Get("q")),
-		CategorySlug: strings.TrimSpace(q.Get("category")),
-		MinPriceJPY:  minPrice,
-		MaxPriceJPY:  maxPrice,
+		Query:         strings.TrimSpace(q.Get("q")),
+		CategorySlugs: categoryParams(q),
+		MinPriceJPY:   minPrice,
+		MaxPriceJPY:   maxPrice,
 	})
 	if err != nil {
 		writeInternal(w, "search products", err)

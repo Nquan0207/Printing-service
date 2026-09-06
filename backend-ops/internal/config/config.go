@@ -30,6 +30,12 @@ type Config struct {
 	AdminEmails []string
 	// ShopEnabled gates the customer-facing home page.
 	ShopEnabled bool
+	// LogLevel is debug|info|warn|error. debug also surfaces /healthz and
+	// /media requests, which are filtered out at info.
+	LogLevel string
+	// CORSOrigin is the allowed origin, or "*" for any. Wildcard is safe only
+	// while the service is loopback-bound -- see withCORS.
+	CORSOrigin string
 }
 
 func Load() Config {
@@ -38,6 +44,8 @@ func Load() Config {
 		DatabaseURL: env("STOCKROOM_DATABASE_URL", "postgresql://raksul:raksul_password@127.0.0.1:5432/stockroom"),
 		AdminEmails: listEnv("STOCKROOM_ADMIN_EMAILS", "admin@stockroom.local"),
 		ShopEnabled: boolEnv("SHOP_ENABLED", true),
+		LogLevel:    env("STOCKROOM_LOG_LEVEL", "info"),
+		CORSOrigin:  env("STOCKROOM_CORS_ORIGIN", "*"),
 		MinIO: MinIO{
 			Endpoint:  env("MINIO_ENDPOINT", "127.0.0.1:9000"),
 			AccessKey: env("MINIO_ACCESS_KEY", "minioadmin"),

@@ -266,6 +266,38 @@ docker rm -f <name>
 | `docker compose down --remove-orphans` | removed | removed | **kept** |
 | `docker compose down -v` | removed | removed | **DELETED — re-crawl needed** |
 
+### Seeing which API is called
+
+Every request the Go service handles is logged as one line:
+
+```bash
+docker compose logs -f api | grep msg=request
+```
+
+```
+level=INFO msg=request method=GET  path=/api/v1/products     status=200 dur_ms=4 query="limit=2" bytes=1497
+level=INFO msg=request method=GET  path=/api/v1/admin/stats  status=200 dur_ms=4 user=31 bytes=1722
+level=WARN msg=request method=GET  path=/api/v1/admin/stats  status=403 dur_ms=0 user=6
+level=WARN msg=request method=GET  path=/api/v1/products/999 status=404 dur_ms=0
+```
+
+The level reflects the outcome, so failures are easy to isolate:
+
+```bash
+docker compose logs api | grep -E 'level=(WARN|ERROR)'   # only 4xx and 5xx
+```
+
+`user=` is the `X-Stockroom-User` header — absent means the request fell back
+to the default user, which is how a `403` on an admin route usually happens.
+
+`/healthz` and `/media` are filtered out at `info`: Docker probes health every
+15 seconds and a single page loads dozens of images, so both would bury real
+traffic. To see them:
+
+```bash
+STOCKROOM_LOG_LEVEL=debug docker compose up -d api
+```
+
 Inspect the database directly:
 
 ```bash
@@ -287,9 +319,24 @@ Defaults work with no `.env` file. Override by exporting before
 | `STOCKROOM_ADMIN_EMAILS` | `admin@stockroom.local` | Comma-separated; granted admin at startup |
 | `CRAWL_MAX_PRODUCTS` | `70` | Products to fetch |
 | `CRAWL_MAX_CATEGORIES` | `8` | Categories to draw from (of 16) |
+| `STOCKROOM_LOG_LEVEL` | `info` | `debug` also logs `/healthz` and `/media` |
+| `STOCKROOM_CORS_ORIGIN` | `*` | Allowed browser origin; `*` means any |
 
 Admin is granted **only at API startup from configuration** — no HTTP route can
 hand it out.
+
+> **`STOCKROOM_CORS_ORIGIN=*` is a real exposure if the port ever leaves
+> localhost.** Identity is an unverified `X-Stockroom-User` header, so a
+> wildcard origin lets any page a user visits call the API from their browser
+> and act as any user, admin included. Narrow it to a specific origin before
+> exposing the port:
+>
+> ```bash
+> STOCKROOM_CORS_ORIGIN=http://localhost:5173 docker compose up -d api
+> ```
+>
+> The web app at `:3000` does not need CORS at all — nginx proxies `/api`, so
+> the browser sees one origin.
 
 ---
 

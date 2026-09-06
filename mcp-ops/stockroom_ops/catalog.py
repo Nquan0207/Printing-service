@@ -37,25 +37,23 @@ def normalize_tokens(raw: Any) -> list[str]:
 
 
 def resolve_categories(
-    tokens: Any, products: list[dict[str, Any]]
+    tokens: Any, categories: list[dict[str, Any]]
 ) -> tuple[set[str], list[str]]:
     """Turn what the model asked for into real slugs.
 
     A model rarely knows the slug. It might say "copy paper", "コピー用紙", or
     "copy_paper_toner" — all three should work, so each token is matched
-    case-insensitively against both the slug and the display name, as a
-    substring. Returns (matched slugs, tokens that matched nothing).
+    case-insensitively against both the slug and the display name, with
+    separators folded. Returns (matched slugs, tokens that matched nothing).
+
+    Resolution happens here, but *filtering* happens in SQL: the resolved slugs
+    go to the API, which does the work.
     """
     requested = normalize_tokens(tokens)
     if not requested:
         return set(), []
 
-    known: dict[str, str] = {}
-    for product in products:
-        category = product.get("category") or {}
-        slug = category.get("slug")
-        if slug:
-            known[slug] = category.get("name", "")
+    known = {c["slug"]: c.get("name", "") for c in categories if c.get("slug")}
 
     matched: set[str] = set()
     unmatched: list[str] = []
@@ -101,16 +99,11 @@ def group_by_category(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return groups
 
 
-def available_categories(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Every category present in the unfiltered catalog, for the View's chips."""
-    counts: dict[str, dict[str, Any]] = {}
-    for product in products:
-        category = product.get("category") or {}
-        slug = category.get("slug")
-        if not slug:
-            continue
-        entry = counts.setdefault(
-            slug, {"slug": slug, "name": category.get("name", slug), "count": 0}
-        )
-        entry["count"] += 1
-    return sorted(counts.values(), key=lambda c: (-c["count"], c["name"]))
+def available_categories(categories: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Chips for the View: every category, with its size, largest first."""
+    out = [
+        {"slug": c["slug"], "name": c.get("name", c["slug"]), "count": c.get("product_count", 0)}
+        for c in categories
+        if c.get("slug")
+    ]
+    return sorted(out, key=lambda c: (-c["count"], c["name"]))

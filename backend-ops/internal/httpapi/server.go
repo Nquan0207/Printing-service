@@ -15,10 +15,18 @@ type Server struct {
 	defaultUserID int64
 	// shopEnabled gates the customer-facing shop in the frontend.
 	shopEnabled bool
+	// corsOrigin is echoed on cross-origin requests; "*" allows any.
+	corsOrigin string
 }
 
-func New(s *store.Store, m *media.Store, defaultUserID int64, shopEnabled bool) *Server {
-	return &Server{store: s, media: m, defaultUserID: defaultUserID, shopEnabled: shopEnabled}
+func New(s *store.Store, m *media.Store, defaultUserID int64, shopEnabled bool, corsOrigin string) *Server {
+	return &Server{
+		store:         s,
+		media:         m,
+		defaultUserID: defaultUserID,
+		shopEnabled:   shopEnabled,
+		corsOrigin:    corsOrigin,
+	}
 }
 
 // Routes builds the mux. Go 1.22+ patterns carry the method, and the
@@ -51,5 +59,8 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("PATCH /api/v1/admin/sizes/{id}", s.requireAdmin(s.AdminUpdateSize))
 
 	mux.HandleFunc("GET /media/{key...}", s.Media)
-	return mux
+
+	// CORS outermost so preflights are answered without being logged as
+	// application traffic, then one log line per real request.
+	return withCORS(s.corsOrigin, withLogging(mux))
 }

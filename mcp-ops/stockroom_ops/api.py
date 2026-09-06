@@ -76,17 +76,22 @@ class StockroomApi:
             params["status"] = status
         return await self._request("GET", "/api/v1/admin/orders", params=params)
 
+    async def categories(self) -> dict[str, Any]:
+        """Slugs, names and product counts -- cheap enough to resolve against."""
+        return await self._request("GET", "/api/v1/categories", identify=False)
+
     async def products(
         self,
         query: str | None = None,
-        category: str | None = None,
+        categories: list[str] | None = None,
         include_inactive: bool = True,
     ) -> dict[str, Any]:
         params: dict[str, Any] = {"include_inactive": str(include_inactive).lower()}
         if query:
             params["q"] = query
-        if category:
-            params["category"] = category
+        if categories:
+            # The API filters in SQL; one comma-separated value covers any number.
+            params["category"] = ",".join(categories)
         return await self._request("GET", "/api/v1/admin/products", params=params)
 
     async def product(self, product_id: int) -> dict[str, Any]:

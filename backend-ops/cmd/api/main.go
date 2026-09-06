@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -26,8 +27,25 @@ func main() {
 	}
 }
 
+// logLevel maps STOCKROOM_LOG_LEVEL onto slog. Anything unrecognised is info.
+func logLevel(name string) slog.Level {
+	switch strings.ToLower(name) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
+}
+
 func run() error {
 	cfg := config.Load()
+	slog.SetDefault(slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+		Level: logLevel(cfg.LogLevel),
+	})))
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
@@ -61,7 +79,7 @@ func run() error {
 
 	srv := &http.Server{
 		Addr:              cfg.Addr,
-		Handler:           httpapi.New(db, objects, defaultUserID, cfg.ShopEnabled).Routes(),
+		Handler:           httpapi.New(db, objects, defaultUserID, cfg.ShopEnabled, cfg.CORSOrigin).Routes(),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

@@ -21,6 +21,9 @@ type Category struct {
 	ID   int64
 	Slug string
 	Name string
+	// ProductCount counts active products; lets a caller build category chips
+	// without fetching the whole catalog.
+	ProductCount int
 }
 
 type Size struct {
@@ -43,10 +46,11 @@ type Product struct {
 
 // ProductFilter mirrors the query parameters of GET /api/v1/products.
 type ProductFilter struct {
-	Query        string
-	CategorySlug string
-	MinPriceJPY  *int
-	MaxPriceJPY  *int
+	Query string
+	// CategorySlugs matches any of the given slugs. Empty means every category.
+	CategorySlugs []string
+	MinPriceJPY   *int
+	MaxPriceJPY   *int
 	// IncludeInactive is set only by admin views; the shop never sees
 	// deactivated products.
 	IncludeInactive bool
@@ -56,7 +60,9 @@ type ProductFilter struct {
 // so a filter chip never renders a dead option.
 func (s *Store) Categories(ctx context.Context) ([]Category, error) {
 	rows, err := s.pool.Query(ctx, `
-		SELECT c.id, c.slug, c.name
+		SELECT c.id, c.slug, c.name,
+		       (SELECT COUNT(*) FROM products p
+		         WHERE p.category_id = c.id AND p.is_active)::int
 		FROM categories c
 		WHERE EXISTS (
 			SELECT 1 FROM products p
@@ -71,7 +77,7 @@ func (s *Store) Categories(ctx context.Context) ([]Category, error) {
 	var out []Category
 	for rows.Next() {
 		var c Category
-		if err := rows.Scan(&c.ID, &c.Slug, &c.Name); err != nil {
+		if err := rows.Scan(&c.ID, &c.Slug, &c.Name, &c.ProductCount); err != nil {
 			return nil, fmt.Errorf("scan category: %w", err)
 		}
 		out = append(out, c)
@@ -96,8 +102,10 @@ func (s *Store) SearchProducts(ctx context.Context, f ProductFilter) ([]Product,
 	if q := strings.TrimSpace(f.Query); q != "" {
 		add("(p.name ILIKE '%' || ? || '%' OR p.description ILIKE '%' || ? || '%')", q)
 	}
-	if f.CategorySlug != "" {
-		add("c.slug = ?", f.CategorySlug)
+	if len(f.CategorySlugs) > 0 {
+		// ANY($n) keeps this one placeholder regardless of how many slugs are
+		// requested, so the statement still plans and caches predictably.
+		add("c.slug = ANY(?)", f.CategorySlugs)
 	}
 	// A product matches on price when *some single size* falls inside the
 	// bounds -- both conditions in one EXISTS, not two. Split across separate

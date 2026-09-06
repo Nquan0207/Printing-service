@@ -216,8 +216,13 @@ iframe sandbox. An empty array is normal; render a placeholder.
 
 ## `GET /api/v1/products`
 
-Query: `q`, `category` (slug), `min_price`, `max_price`, `limit` (total,
-default 20, max 100), `per_category` (per group).
+Query: `q`, `category`, `min_price`, `max_price`, `limit` (total, default 20,
+max 100), `per_category` (per group).
+
+`category` is **multi-valued**: `?category=a&category=b`, `?category=a,b`, or
+the plural spelling `?categories=a,b` all work, and filtering happens in SQL
+(`slug = ANY(...)`). Omit it for every category; an unknown slug matches
+nothing rather than erroring.
 
 `q` matches name and description, case-insensitive. Filters combine with AND.
 
@@ -257,12 +262,13 @@ responsible for saying "nothing in this snapshot" rather than "does not exist".
 
 ```json
 { "categories": [
-    { "id": 3, "slug": "store_supplies", "name": "店舗用品" }
+    { "id": 3, "slug": "store_supplies", "name": "店舗用品", "product_count": 9 }
 ] }
 ```
 
 Only categories that actually hold products, so filter chips never render a
-dead option.
+dead option. `product_count` is here and nowhere else — it lets a caller build
+those chips without fetching the catalog to count rows itself.
 
 ## `POST /api/v1/quote`
 
