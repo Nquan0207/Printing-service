@@ -500,8 +500,12 @@ paths:
       summary: List products including deactivated ones
       operationId: adminProducts
       description: |
-        Unlike `GET /api/v1/products`, this returns a **flat list** and includes
-        products with `is_active = false`, which the shop hides.
+        Same category-first shape as `GET /api/v1/products` — one group per
+        category, each holding its products — so a consumer renders sections
+        without regrouping.
+
+        Two differences: it includes products with `is_active = false` (which
+        the shop hides), and every product carries its `description`.
       parameters:
         - name: q
           in: query
@@ -522,17 +526,10 @@ paths:
         - $ref: "#/components/parameters/UserHeader"
       responses:
         "200":
-          description: Products.
+          description: Products, grouped by category.
           content:
             application/json:
-              schema:
-                type: object
-                required: [products, count]
-                properties:
-                  products:
-                    type: array
-                    items: { $ref: "#/components/schemas/Product" }
-                  count: { type: integer }
+              schema: { $ref: "#/components/schemas/ProductList" }
         "403": { $ref: "#/components/responses/Forbidden" }
 
   /api/v1/admin/products/{id}:

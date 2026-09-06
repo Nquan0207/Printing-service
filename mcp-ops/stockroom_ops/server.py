@@ -19,7 +19,6 @@ from pydantic import BeforeValidator, Field
 from stockroom_ops.api import ApiError, StockroomApi
 from stockroom_ops.catalog import (
     available_categories,
-    group_by_category,
     normalize_tokens,
     resolve_categories,
 )
@@ -231,16 +230,19 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
             if asked and not wanted:
                 # Every requested category was unknown. Returning the whole
                 # catalog reads as "the filter is broken" -- say nothing matched.
-                products: list[dict[str, Any]] = []
+                groups: list[dict[str, Any]] = []
+                count = 0
             else:
+                # The API returns category-first groups already; no regrouping.
                 data = await api.products(q, sorted(wanted), include_inactive)
-                products = data.get("products", [])
+                groups = data.get("groups", [])
+                count = data.get("count", 0)
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
 
         payload: dict[str, Any] = {
-            "groups": group_by_category(products),
-            "count": len(products),
+            "groups": groups,
+            "count": count,
             "available_categories": available_categories(known),
             "selected_categories": sorted(wanted),
         }

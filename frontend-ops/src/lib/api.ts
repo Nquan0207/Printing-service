@@ -171,10 +171,9 @@ export const api = {
         body: JSON.stringify({ status }),
       }),
     users: () => request<{ users: AdminUser[]; total: number }>("/admin/users?limit=200"),
+    // Category-first, same shape as the shop endpoint.
     products: (q?: string) =>
-      request<{ products: Product[]; count: number }>(
-        `/admin/products${q ? `?q=${encodeURIComponent(q)}` : ""}`,
-      ),
+      request<ProductList>(`/admin/products${q ? `?q=${encodeURIComponent(q)}` : ""}`),
     updateProduct: (
       id: number,
       patch: { name?: string; base_price_jpy?: number; is_active?: boolean; description?: string },

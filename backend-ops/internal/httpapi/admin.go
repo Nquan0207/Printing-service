@@ -165,11 +165,10 @@ func (s *Server) AdminProducts(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, "admin products", err)
 		return
 	}
-	out := make([]productJSON, 0, len(products))
-	for _, p := range products {
-		out = append(out, toProduct(p, true))
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"products": out, "count": len(out)})
+	// Grouped by category, like GET /api/v1/products: a consumer renders one
+	// section per category without regrouping client-side. Descriptions are
+	// included here (the shop endpoint omits them) because admin views show them.
+	writeJSON(w, http.StatusOK, groupByCategory(products, len(products), 0, true))
 }
 
 type updateProductRequest struct {

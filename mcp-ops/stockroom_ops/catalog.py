@@ -1,9 +1,8 @@
-"""Grouping and category selection for the catalog View.
+"""Category selection for the catalog View.
 
-The admin products endpoint returns a flat list, each product carrying its
-category, so grouping and multi-category filtering happen here rather than in
-the Go service. At PoC scale (~60 products, capped at 500 server-side) that is
-free, and it keeps the API surface unchanged.
+Only *resolution* happens here -- turning what a model said ("copy paper",
+"ファイル") into real slugs. Filtering and grouping are the API's job: it takes
+the resolved slugs and returns category-first groups.
 """
 
 from __future__ import annotations
@@ -71,32 +70,6 @@ def resolve_categories(
         else:
             unmatched.append(str(raw))
     return matched, unmatched
-
-
-def group_by_category(products: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Group into rendered sections, largest first, then by name.
-
-    An empty group is never emitted: a section header with nothing under it
-    reads as a bug.
-    """
-    buckets: dict[str, dict[str, Any]] = {}
-    for product in products:
-        category = product.get("category") or {}
-        slug = category.get("slug") or "uncategorised"
-        bucket = buckets.setdefault(
-            slug,
-            {
-                "category": {"slug": slug, "name": category.get("name", slug)},
-                "products": [],
-            },
-        )
-        bucket["products"].append(product)
-
-    groups = [g for g in buckets.values() if g["products"]]
-    for group in groups:
-        group["count"] = len(group["products"])
-    groups.sort(key=lambda g: (-g["count"], g["category"]["name"]))
-    return groups
 
 
 def available_categories(categories: list[dict[str, Any]]) -> list[dict[str, Any]]:

@@ -289,7 +289,7 @@ function OrdersTab() {
 }
 
 function CatalogTab() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [groups, setGroups] = useState<{ category: { id: number; name: string }; count: number; products: Product[] }[]>([]);
   const [q, setQ] = useState("");
   const [debounced] = useDebouncedValue(q, 250);
   const [editing, setEditing] = useState<number | null>(null);
@@ -297,14 +297,14 @@ function CatalogTab() {
   const load = useCallback(() => {
     api.admin
       .products(debounced || undefined)
-      .then((r) => setProducts(r.products))
+      .then((r) => setGroups(r.groups))
       .catch((e) => notifications.show({ color: "red", message: e.message }));
   }, [debounced]);
 
   useEffect(load, [load]);
 
   return (
-    <Panel title={`Catalog (${products.length})`}>
+    <Panel title={`Catalog (${groups.reduce((n, g) => n + g.count, 0)})`}>
       <TextInput
         placeholder="Filter products…"
         value={q}
@@ -312,53 +312,60 @@ function CatalogTab() {
         mb="md"
         maw={320}
       />
-      <Table.ScrollContainer minWidth={820}>
-        <Table striped highlightOnHover verticalSpacing="xs">
-          <Table.Thead>
-            <Table.Tr>
-              <Table.Th w={60}>ID</Table.Th>
-              <Table.Th>Name</Table.Th>
-              <Table.Th>Category</Table.Th>
-              <Table.Th ta="right">Base</Table.Th>
-              <Table.Th>Sizes</Table.Th>
-              <Table.Th w={200} />
-            </Table.Tr>
-          </Table.Thead>
-          <Table.Tbody>
-            {products.map((p) =>
-              editing === p.id ? (
-                <ProductEditor
-                  key={p.id}
-                  product={p}
-                  onDone={() => {
-                    setEditing(null);
-                    load();
-                  }}
-                />
-              ) : (
-                <Table.Tr key={p.id}>
-                  <Table.Td c="dimmed" fz="xs">
-                    {p.id}
-                  </Table.Td>
-                  <Table.Td>{p.name}</Table.Td>
-                  <Table.Td c="dimmed" fz="xs">
-                    {p.category.name}
-                  </Table.Td>
-                  <Table.Td ta="right">{yen(p.base_price_jpy)}</Table.Td>
-                  <Table.Td c="dimmed" fz="xs">
-                    {p.sizes.map((s) => `${s.size_name} ${yen(s.unit_price_jpy)}`).join(" · ")}
-                  </Table.Td>
-                  <Table.Td>
-                    <Button size="compact-xs" variant="default" onClick={() => setEditing(p.id)}>
-                      Edit
-                    </Button>
-                  </Table.Td>
-                </Table.Tr>
-              ),
-            )}
-          </Table.Tbody>
-        </Table>
-      </Table.ScrollContainer>
+      {groups.map((g) => (
+        <Table.ScrollContainer minWidth={820} key={g.category.id} mb="md">
+          <Group gap="xs" mb={4}>
+            <Text fw={600} size="sm">
+              {g.category.name}
+            </Text>
+            <Badge size="sm" variant="light" color="gray">
+              {g.count}
+            </Badge>
+          </Group>
+          <Table striped highlightOnHover verticalSpacing="xs">
+            <Table.Thead>
+              <Table.Tr>
+                <Table.Th w={60}>ID</Table.Th>
+                <Table.Th>Name</Table.Th>
+                <Table.Th ta="right">Base</Table.Th>
+                <Table.Th>Sizes</Table.Th>
+                <Table.Th w={200} />
+              </Table.Tr>
+            </Table.Thead>
+            <Table.Tbody>
+              {g.products.map((p) =>
+                editing === p.id ? (
+                  <ProductEditor
+                    key={p.id}
+                    product={p}
+                    onDone={() => {
+                      setEditing(null);
+                      load();
+                    }}
+                  />
+                ) : (
+                  <Table.Tr key={p.id}>
+                    <Table.Td c="dimmed" fz="xs">
+                      {p.id}
+                    </Table.Td>
+                    <Table.Td>{p.name}</Table.Td>
+                    <Table.Td ta="right">{yen(p.base_price_jpy)}</Table.Td>
+                    <Table.Td c="dimmed" fz="xs">
+                      {p.sizes.map((s) => `${s.size_name} ${yen(s.unit_price_jpy)}`).join(" · ")}
+                    </Table.Td>
+                    <Table.Td>
+                      <Button size="compact-xs" variant="default" onClick={() => setEditing(p.id)}>
+                        Edit
+                      </Button>
+                    </Table.Td>
+                  </Table.Tr>
+                ),
+              )}
+            </Table.Tbody>
+          </Table>
+        </Table.ScrollContainer>
+      ))}
+      {groups.length === 0 && <Text c="dimmed">No products.</Text>}
       <Text size="xs" c="dimmed" mt="sm">
         Edits are overwritten by the next crawl, which upserts on{" "}
         <Text span ff="monospace" fz="xs">

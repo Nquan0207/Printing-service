@@ -162,13 +162,13 @@ func (s *Server) SearchProducts(w http.ResponseWriter, r *http.Request) {
 		writeInternal(w, "search products", err)
 		return
 	}
-	writeJSON(w, http.StatusOK, groupByCategory(products, limit, perGroup))
+	writeJSON(w, http.StatusOK, groupByCategory(products, limit, perGroup, false))
 }
 
 // groupByCategory builds the rendered sections: groups ordered by product
 // count descending then category name, products by id. Empty groups are never
 // emitted -- a section header with nothing under it is a UI bug.
-func groupByCategory(products []store.Product, limit, perGroup int) productListJSON {
+func groupByCategory(products []store.Product, limit, perGroup int, withDescription bool) productListJSON {
 	order := []int64{}
 	byCategory := map[int64]*groupJSON{}
 	for _, p := range products {
@@ -181,7 +181,7 @@ func groupByCategory(products []store.Product, limit, perGroup int) productListJ
 		if perGroup > 0 && len(g.Products) >= perGroup {
 			continue
 		}
-		g.Products = append(g.Products, toProduct(p, false))
+		g.Products = append(g.Products, toProduct(p, withDescription))
 	}
 
 	groups := make([]groupJSON, 0, len(order))
