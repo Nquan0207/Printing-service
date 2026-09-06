@@ -69,3 +69,28 @@ class StockroomApi:
 
     async def stats(self, days: int = 30) -> dict[str, Any]:
         return await self._request("GET", "/api/v1/admin/stats", params={"days": days})
+
+    async def orders(self, status: str | None = None, limit: int = 50) -> dict[str, Any]:
+        params: dict[str, Any] = {"limit": limit}
+        if status:
+            params["status"] = status
+        return await self._request("GET", "/api/v1/admin/orders", params=params)
+
+    async def products(
+        self,
+        query: str | None = None,
+        category: str | None = None,
+        include_inactive: bool = True,
+    ) -> dict[str, Any]:
+        params: dict[str, Any] = {"include_inactive": str(include_inactive).lower()}
+        if query:
+            params["q"] = query
+        if category:
+            params["category"] = category
+        return await self._request("GET", "/api/v1/admin/products", params=params)
+
+    async def product(self, product_id: int) -> dict[str, Any]:
+        return await self._request("GET", f"/api/v1/products/{product_id}")
+
+    async def users(self, limit: int = 50) -> dict[str, Any]:
+        return await self._request("GET", "/api/v1/admin/users", params={"limit": limit})

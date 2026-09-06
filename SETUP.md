@@ -92,6 +92,8 @@ server-side, so the frontend is never rebuilt. Turn it back on with
 
 The `mcp` service exposes the catalog to AI hosts as an **MCP App** — a tool
 that renders an interactive dashboard *inside the conversation*, not just text.
+[docs/flow.md](docs/flow.md) traces what happens between your prompt and the
+answer.
 
 Claude Desktop launches MCP servers itself over stdio, so point it at the
 container. Edit:
@@ -133,10 +135,9 @@ it call the tool again directly, without the model being involved.
 
 ### Prompts to try
 
-There is currently **one tool**, `get_dashboard(days)`, but it returns the whole
-picture in a single call — totals, per-category product counts, daily orders and
-revenue, best sellers, and a price distribution. So Claude can answer analytical
-questions without extra round trips.
+Five read-only tools are available — `get_dashboard`, `list_orders`,
+`list_products`, `get_product`, `list_users` — each with its own panel. See
+[docs/mcp-tools.md](docs/mcp-tools.md) for the full declaration.
 
 **Open the panel**
 
@@ -169,14 +170,22 @@ questions without extra round trips.
 > checkouts from testing. Claude will happily reason over it — just do not read
 > the revenue as real.
 
-### What it cannot do yet
+**Browse orders, catalog and users**
 
-Only `get_dashboard` exists. Asking to *list individual orders*, *edit a price*,
-*cancel an order*, or *search products* will not work — Claude has no tool for
-those and will say so, or fall back to guessing. Order and catalog listing Views
-are the next increment; write tools are deliberately excluded, because product
-text is crawled from a live website and a prompt injection could otherwise
-trigger a cancellation or price change.
+- "Show me all the orders."
+- "Any cancelled orders?"
+- "Search the catalog for paper."
+- "Tell me about product 34." *(shows its photos)*
+- "Who has been ordering, and how much have they spent?"
+
+### What it cannot do
+
+All five tools are **read-only**. Asking to cancel an order, change a price or
+deactivate a product will not work — no such tool is exposed. That is
+deliberate: product text is crawled from a live website, so a prompt injection
+could otherwise talk the model into a destructive call. The write endpoints
+exist on the Go API and are reachable from the admin web UI at
+<http://127.0.0.1:3000>.
 
 ### If Docker startup is too slow
 

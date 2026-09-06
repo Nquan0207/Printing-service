@@ -1,0 +1,26 @@
+{
+  // This repo has two self-contained Python services, each with its own venv:
+  //   mcp-ops/.venv   -> mcp, httpx, uvicorn
+  //   crawler/.venv   -> psycopg, minio, requests
+  // An editor can only run one interpreter per window, so we point at mcp-ops
+  // (the one with the most imports) and add the crawler's packages to the
+  // analysis path so its imports resolve too.
+  "python.defaultInterpreterPath": "${workspaceFolder}/mcp-ops/.venv/bin/python",
+  "python.analysis.extraPaths": [
+    "${workspaceFolder}/mcp-ops",
+    "${workspaceFolder}/crawler",
+    "${workspaceFolder}/crawler/.venv/lib/python3.13/site-packages"
+  ],
+  "python.analysis.autoSearchPaths": true,
+  "python.terminal.activateEnvironment": false,
+
+  "search.exclude": {
+    "**/node_modules": true,
+    "**/.venv": true,
+    "**/dist": true
+  },
+  "files.watcherExclude": {
+    "**/node_modules/**": true,
+    "**/.venv/**": true
+  }
+}

@@ -11,7 +11,7 @@ import argparse
 import logging
 from typing import Any
 
-from mcp.server.apps import Apps
+from mcp.server.apps import Apps, ResourceCsp
 from mcp.server.mcpserver import MCPServer
 from mcp.types import ToolAnnotations
 
@@ -21,6 +21,10 @@ from stockroom_ops.config import VIEWS_DIR, Settings
 log = logging.getLogger(__name__)
 
 DASHBOARD_URI = "ui://stockroom/dashboard"
+ORDERS_URI = "ui://stockroom/orders"
+CATALOG_URI = "ui://stockroom/catalog"
+PRODUCT_URI = "ui://stockroom/product"
+USERS_URI = "ui://stockroom/users"
 
 
 def read_only() -> ToolAnnotations:
@@ -41,9 +45,34 @@ def load_view(name: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def absolute_images(payload: dict[str, Any], public_base: str) -> dict[str, Any]:
+    """Rewrite relative /media paths to absolute, browser-reachable URLs.
+
+    The API returns "/media/<key>", which resolves against the *iframe's*
+    origin -- not the API's -- so inside a View it would 404. The CSP allowance
+    on the product Views names the same origin.
+    """
+    base = public_base.rstrip("/")
+
+    def fix(value: Any) -> Any:
+        if isinstance(value, str) and value.startswith("/media/"):
+            return base + value
+        if isinstance(value, list):
+            return [fix(v) for v in value]
+        if isinstance(value, dict):
+            return {k: fix(v) for k, v in value.items()}
+        return value
+
+    return fix(payload)
+
+
 def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
     apps = Apps()
     api = StockroomApi(settings.api_base, settings.admin_email)
+
+    # Product Views load images from the Go service, a different origin than
+    # the iframe. Without this the deny-by-default CSP blocks them.
+    image_csp = ResourceCsp(resource_domains=[settings.public_api_base])
 
     # The View is a single self-contained HTML file: the host renders ui://
     # resources in a sandboxed iframe under a deny-by-default CSP, so nothing
@@ -53,6 +82,32 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         load_view("dashboard.html"),
         name="Stockroom dashboard",
         description="Catalog, order and revenue overview.",
+    )
+    apps.add_html_resource(
+        ORDERS_URI,
+        load_view("orders.html"),
+        name="Orders",
+        description="Every customer order with its line items.",
+    )
+    apps.add_html_resource(
+        CATALOG_URI,
+        load_view("catalog.html"),
+        name="Catalog",
+        description="Products with their S/M/L price ladder.",
+        csp=image_csp,
+    )
+    apps.add_html_resource(
+        PRODUCT_URI,
+        load_view("product.html"),
+        name="Product",
+        description="One product in full, with photos.",
+        csp=image_csp,
+    )
+    apps.add_html_resource(
+        USERS_URI,
+        load_view("users.html"),
+        name="Users",
+        description="Accounts with cart and order activity.",
     )
 
     @apps.tool(
@@ -73,6 +128,89 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
             return await api.stats(days)
         except ApiError as exc:
             # Surface a usable message rather than an empty iframe.
+            return {"error": {"code": exc.code, "message": str(exc)}}
+
+    @apps.tool(
+        resource_uri=ORDERS_URI,
+        name="list_orders",
+        title="List orders",
+        description=(
+            "List customer orders newest first, with line items, totals and status. "
+            "Optionally filter by status (pending, confirmed, cancelled). Read-only."
+        ),
+        annotations=read_only(),
+        structured_output=True,
+    )
+    async def list_orders(status: str | None = None, limit: int = 50) -> dict[str, Any]:
+        """List orders, optionally filtered by status."""
+        if status and status not in ("pending", "confirmed", "cancelled"):
+            return {
+                "error": {
+                    "code": "invalid_request",
+                    "message": "status must be pending, confirmed or cancelled.",
+                }
+            }
+        try:
+            return await api.orders(status, max(1, min(int(limit), 200)))
+        except ApiError as exc:
+            return {"error": {"code": exc.code, "message": str(exc)}}
+
+    @apps.tool(
+        resource_uri=CATALOG_URI,
+        name="list_products",
+        title="List products",
+        description=(
+            "List catalog products with their S/M/L sizes and unit prices. "
+            "Optionally search by text or filter to one category. Includes "
+            "deactivated products. Read-only."
+        ),
+        annotations=read_only(),
+        structured_output=True,
+    )
+    async def list_products(
+        q: str | None = None,
+        category: str | None = None,
+        include_inactive: bool = True,
+    ) -> dict[str, Any]:
+        """Search the catalog."""
+        try:
+            data = await api.products(q, category, include_inactive)
+        except ApiError as exc:
+            return {"error": {"code": exc.code, "message": str(exc)}}
+        return absolute_images(data, settings.public_api_base)
+
+    @apps.tool(
+        resource_uri=PRODUCT_URI,
+        name="get_product",
+        title="Get product",
+        description="Show one product in full: description, sizes, prices and photos. Read-only.",
+        annotations=read_only(),
+        structured_output=True,
+    )
+    async def get_product(product_id: int) -> dict[str, Any]:
+        """Return a single product by its catalog id."""
+        try:
+            data = await api.product(int(product_id))
+        except ApiError as exc:
+            return {"error": {"code": exc.code, "message": str(exc)}}
+        return absolute_images(data, settings.public_api_base)
+
+    @apps.tool(
+        resource_uri=USERS_URI,
+        name="list_users",
+        title="List users",
+        description=(
+            "List accounts with their open cart lines, order count and lifetime spend. "
+            "Read-only."
+        ),
+        annotations=read_only(),
+        structured_output=True,
+    )
+    async def list_users(limit: int = 50) -> dict[str, Any]:
+        """List user accounts."""
+        try:
+            return await api.users(max(1, min(int(limit), 200)))
+        except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
 
     server = MCPServer(

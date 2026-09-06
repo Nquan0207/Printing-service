@@ -8,3 +8,4 @@ crawler/.venv/
 crawler/.env
 
 node_modules/
+dist/

@@ -28,7 +28,8 @@ frontend-ops/ (React)   mcp-ops/ (Python, read-only admin)
 
 ## Run everything
 
-Full setup instructions for a human are in [SETUP.md](SETUP.md).
+Full setup instructions for a human are in [SETUP.md](SETUP.md); the
+prompt-to-response path is traced in [docs/flow.md](docs/flow.md).
 
 ```bash
 docker compose up -d --build     # postgres, minio, api, web, mcp
