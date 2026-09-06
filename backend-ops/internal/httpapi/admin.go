@@ -274,7 +274,49 @@ func (s *Server) AdminUsers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "offset is out of range.")
 		return
 	}
-	users, total, err := s.store.AllUsers(r.Context(), limit, offset)
+	role := strings.ToLower(strings.TrimSpace(q.Get("role")))
+	if role != "" && role != "admin" && role != "customer" {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+			"role must be admin or customer.")
+		return
+	}
+
+	filter := store.UserFilter{
+		Query:   strings.TrimSpace(q.Get("q")),
+		Role:    role,
+		HasCart: q.Get("has_cart") == "true",
+		Limit:   limit,
+		Offset:  offset,
+	}
+	for _, p := range []struct {
+		key  string
+		dest **int
+	}{
+		{"min_orders", &filter.MinOrders},
+		{"max_orders", &filter.MaxOrders},
+		{"min_spent", &filter.MinSpentJPY},
+		{"max_spent", &filter.MaxSpentJPY},
+	} {
+		v, err := optionalInt(q.Get(p.key))
+		if err != nil {
+			writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+				p.key+" must be a non-negative integer.")
+			return
+		}
+		*p.dest = v
+	}
+	if filter.From, err = dayParam(q.Get("from"), false); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+			"from must be a date as YYYY-MM-DD.")
+		return
+	}
+	if filter.To, err = dayParam(q.Get("to"), true); err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest,
+			"to must be a date as YYYY-MM-DD.")
+		return
+	}
+
+	users, total, err := s.store.AllUsers(r.Context(), filter)
 	if err != nil {
 		writeInternal(w, "admin users", err)
 		return
@@ -290,6 +332,9 @@ func (s *Server) AdminUsers(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"users": out, "total": total, "limit": limit, "offset": offset,
+		// Same contract as the order list: the View renders the filters in
+		// force rather than the ones it believes it sent.
+		"applied": appliedUserJSON(filter),
 	})
 }
 
@@ -413,4 +458,32 @@ func (s *Server) AdminDeleteProduct(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func appliedUserJSON(f store.UserFilter) map[string]any {
+	applied := map[string]any{}
+	if f.Query != "" {
+		applied["q"] = f.Query
+	}
+	if f.Role != "" {
+		applied["role"] = f.Role
+	}
+	if f.HasCart {
+		applied["has_cart"] = true
+	}
+	for key, value := range map[string]*int{
+		"min_orders": f.MinOrders, "max_orders": f.MaxOrders,
+		"min_spent": f.MinSpentJPY, "max_spent": f.MaxSpentJPY,
+	} {
+		if value != nil {
+			applied[key] = *value
+		}
+	}
+	if f.From != nil {
+		applied["from"] = f.From.Format("2006-01-02")
+	}
+	if f.To != nil {
+		applied["to"] = f.To.AddDate(0, 0, -1).Format("2006-01-02")
+	}
+	return applied
 }

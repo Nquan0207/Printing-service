@@ -252,16 +252,22 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         try:
             # Filtering happens in SQL and the API echoes back what it applied,
             # so there is nothing to post-process here.
+            # Only send what was actually asked for: the client no longer
+            # guesses which zeros are meaningful, so each sentinel is applied
+            # here, where its meaning is known.
+            bounds = {
+                "min_total": int(min_total),
+                "max_total": int(max_total),
+                "min_quantity": int(min_quantity),
+                "max_quantity": int(max_quantity),
+            }
             return await api.orders(
                 limit=max(1, min(int(limit), 200)),
                 q=str(q).strip(),
                 status=",".join(normalize_tokens(status)),
-                days=max(0, int(days)),
+                days=max(0, int(days)) or None,
                 **{"from": date_from, "to": date_to},
-                min_total=max(0, int(min_total)),
-                max_total=max(0, int(max_total)),
-                min_quantity=max(0, int(min_quantity)),
-                max_quantity=max(0, int(max_quantity)),
+                **{k: v for k, v in bounds.items() if v > 0},
             )
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
@@ -353,16 +359,93 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="list_users",
         title="List users",
         description=(
-            "List accounts with their open cart lines, order count and lifetime spend. "
-            "Read-only."
+            "THE tool for any question about accounts or customers. Returns "
+            "them with open cart lines, order count and lifetime spend, and "
+            "renders as an interactive panel showing exactly the filters you "
+            "passed.\n\n"
+            "Translate the user's words into the arguments — several at once is "
+            "normal:\n"
+            "  'find carol' / 'who is bob@…'   -> q='carol'\n"
+            "  'just the admins'               -> role='admin'\n"
+            "  'customers, not admins'         -> role='customer'\n"
+            "  'who has an abandoned cart'     -> has_cart=True\n"
+            "  'repeat buyers' / '3+ orders'   -> min_orders=3\n"
+            "  'who never ordered'             -> max_orders=0\n"
+            "  'spent over ¥100,000'           -> min_spent=100000\n"
+            "  'signed up in August'           -> date_from='2026-08-01', "
+            "date_to='2026-08-31'\n\n"
+            "Spend excludes cancelled orders. The panel arrives with these "
+            "filters filled in and the user can refine them there, so call this "
+            "once with what they asked for. Read-only."
         ),
         annotations=read_only(),
         structured_output=True,
     )
-    async def list_users(limit: int = 50) -> dict[str, Any]:
-        """List user accounts."""
+    async def list_users(
+        q: Annotated[
+            LooseText,
+            Field(default="", description="Free text matched against name and email."),
+        ] = "",
+        role: Annotated[
+            LooseText,
+            Field(default="", description="'admin', 'customer', or empty for both."),
+        ] = "",
+        has_cart: Annotated[
+            bool,
+            Field(default=False, description="Only accounts with an open cart."),
+        ] = False,
+        min_orders: Annotated[
+            int, Field(default=0, description="Minimum orders placed. 0 = no minimum.")
+        ] = 0,
+        max_orders: Annotated[
+            int,
+            Field(
+                default=-1,
+                description="Maximum orders placed. Use 0 for 'never ordered'; -1 = no maximum.",
+            ),
+        ] = -1,
+        min_spent: Annotated[
+            int, Field(default=0, description="Minimum lifetime spend in yen.")
+        ] = 0,
+        max_spent: Annotated[
+            int, Field(default=0, description="Maximum lifetime spend in yen. 0 = no maximum.")
+        ] = 0,
+        date_from: Annotated[
+            LooseText,
+            Field(default="", description="Earliest signup date, YYYY-MM-DD, inclusive."),
+        ] = "",
+        date_to: Annotated[
+            LooseText,
+            Field(default="", description="Latest signup date, YYYY-MM-DD, inclusive."),
+        ] = "",
+        limit: Annotated[int, Field(default=50, description="Rows to return.")] = 50,
+    ) -> dict[str, Any]:
+        """List user accounts, filtered by name, role, activity and spend."""
+        wanted = str(role).strip().lower()
+        if wanted not in ("", "admin", "customer"):
+            return {
+                "error": {
+                    "code": "invalid_request",
+                    "message": f"Unknown role {role!r}. Use 'admin' or 'customer'.",
+                }
+            }
         try:
-            return await api.users(max(1, min(int(limit), 200)))
+            bounds = {
+                "min_orders": int(min_orders),
+                "min_spent": int(min_spent),
+                "max_spent": int(max_spent),
+            }
+            return await api.users(
+                limit=max(1, min(int(limit), 200)),
+                q=str(q).strip(),
+                role=wanted,
+                has_cart="true" if has_cart else "",
+                # 0 is a real filter here -- "never ordered" -- so its sentinel
+                # for "no maximum" is negative, not falsy.
+                **({"max_orders": int(max_orders)} if int(max_orders) >= 0 else {}),
+                **{k: v for k, v in bounds.items() if v > 0},
+                **{"from": date_from, "to": date_to},
+            )
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
 

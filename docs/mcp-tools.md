@@ -18,7 +18,7 @@ API and are deliberately not exposed here.
 | `list_orders` | `q?`, `status?`, `days?`, `date_from?`, `date_to?`, `min_total?`, `max_total?`, `min_quantity?`, `max_quantity?`, `limit` | `ui://stockroom/orders` | `GET /api/v1/admin/orders` |
 | `list_products` | `categories?`, `q?`, `include_inactive` (default true) | `ui://stockroom/catalog` | `GET /api/v1/admin/products` |
 | `get_product` | `product_id` | `ui://stockroom/product` | `GET /api/v1/products/{id}` |
-| `list_users` | `limit` (default 50) | `ui://stockroom/users` | `GET /api/v1/admin/users` |
+| `list_users` | `q?`, `role?`, `has_cart?`, `min_orders?`, `max_orders?`, `min_spent?`, `max_spent?`, `date_from?`, `date_to?`, `limit` | `ui://stockroom/users` | `GET /api/v1/admin/users` |
 
 **All five are built and verified.**
 
@@ -140,11 +140,33 @@ dozens. Sharpening the tool descriptions did not stop it; taking it out of the
 model's view did. Descriptions are suggestions; visibility is declared and
 host-enforced.
 
-### `list_users(limit)`
+### `list_users(q?, role?, has_cart?, min_orders?, max_orders?, min_spent?, max_spent?, date_from?, date_to?, limit)`
 
-*"Who has been ordering?"* — the Users tab.
+*"Who has been ordering?"*, *"which customers never bought anything?"* — the
+Users tab.
 
-Id, name, email, admin flag, open cart lines, order count, lifetime spend.
+Id, name, email, admin flag, open cart lines, order count, lifetime spend and
+signup date. Same filter-and-panel contract as `list_orders`:
+
+| The user says | Arguments |
+|---|---|
+| "find carol" / "who is bob@…" | `q='carol'` |
+| "just the admins" | `role='admin'` |
+| "customers, not admins" | `role='customer'` |
+| "who has an abandoned cart" | `has_cart=True` |
+| "repeat buyers" / "3+ orders" | `min_orders=3` |
+| "who never ordered" | `max_orders=0` |
+| "spent over ¥100,000" | `min_spent=100000` |
+| "signed up in August" | `date_from='2026-08-01'`, `date_to='2026-08-31'` |
+
+Spend excludes cancelled orders, and the numeric bounds read the same derived
+figures the rows display — filtering on a number the table does not show would
+be untraceable.
+
+**`max_orders=0` is a real filter**, not "unset". That is why its "no maximum"
+sentinel is `-1` rather than `0`, and why the API client drops only `None` and
+`""`: a falsy check silently discarded "customers who never ordered", which
+looked exactly like the filter being ignored.
 
 > Emails are visible here. They are seeded demo accounts, but the tool result
 > enters the model's context — worth knowing before pointing this at a host

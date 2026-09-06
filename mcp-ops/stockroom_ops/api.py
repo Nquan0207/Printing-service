@@ -22,6 +22,20 @@ class ApiError(RuntimeError):
         self.code = code
 
 
+def _params(limit: int, filters: dict[str, Any]) -> dict[str, Any]:
+    """Drop unset filters -- and only those.
+
+    "Unset" is None or the empty string, never 0. `max_orders=0` means
+    "customers who never ordered", which a falsy check silently discards; the
+    caller decides what counts as unset and simply omits it.
+    """
+    params: dict[str, Any] = {"limit": limit}
+    for key, value in filters.items():
+        if value is not None and value != "":
+            params[key] = value
+    return params
+
+
 class StockroomApi:
     def __init__(self, base_url: str, admin_email: str):
         self._base = base_url.rstrip("/")
@@ -73,13 +87,9 @@ class StockroomApi:
     async def orders(self, limit: int = 50, **filters: Any) -> dict[str, Any]:
         """List orders. Filters map straight onto the query string; the API
         resolves and echoes them back as `applied`."""
-        params: dict[str, Any] = {"limit": limit}
-        for key, value in filters.items():
-            # 0 and "" are "not set" -- an order total of exactly 0 is not a
-            # filter anyone means, and neither is an empty date.
-            if value:
-                params[key] = value
-        return await self._request("GET", "/api/v1/admin/orders", params=params)
+        return await self._request(
+            "GET", "/api/v1/admin/orders", params=_params(limit, filters)
+        )
 
     async def products(
         self,
@@ -99,5 +109,8 @@ class StockroomApi:
     async def product(self, product_id: int) -> dict[str, Any]:
         return await self._request("GET", f"/api/v1/products/{product_id}")
 
-    async def users(self, limit: int = 50) -> dict[str, Any]:
-        return await self._request("GET", "/api/v1/admin/users", params={"limit": limit})
+    async def users(self, limit: int = 50, **filters: Any) -> dict[str, Any]:
+        """List user accounts, with the same filter convention as `orders`."""
+        return await self._request(
+            "GET", "/api/v1/admin/users", params=_params(limit, filters)
+        )

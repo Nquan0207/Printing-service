@@ -352,18 +352,90 @@ type AdminUser struct {
 	SpentJPY  int       `json:"spent_jpy"`
 }
 
-func (s *Store) AllUsers(ctx context.Context, limit, offset int) ([]AdminUser, int, error) {
+// UserFilter narrows an admin user list. Every field is optional, and the
+// numeric bounds read the same derived figures the rows display -- filtering
+// on a number the table does not show would be untraceable.
+type UserFilter struct {
+	// Query matches name or email.
+	Query string
+	// Role is "admin", "customer", or empty for both.
+	Role string
+	// HasCart keeps only accounts with something left in the basket.
+	HasCart bool
+
+	MinOrders   *int
+	MaxOrders   *int
+	MinSpentJPY *int
+	MaxSpentJPY *int
+	// From is inclusive, To exclusive, over the signup date.
+	From *time.Time
+	To   *time.Time
+
+	Limit  int
+	Offset int
+}
+
+// The three derived figures, defined once: the WHERE clause and the SELECT
+// must agree, or a filter would keep rows whose displayed number contradicts it.
+const (
+	sqlCartLines = "(SELECT COUNT(*) FROM cart_items ci WHERE ci.user_id = u.id)"
+	sqlOrders    = "(SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id)"
+	sqlSpent     = `(SELECT COALESCE(SUM(o.total_jpy),0) FROM orders o
+	                  WHERE o.user_id = u.id AND o.status <> 'cancelled')`
+)
+
+func (s *Store) AllUsers(ctx context.Context, f UserFilter) ([]AdminUser, int, error) {
+	clauses := []string{"TRUE"}
+	args := []any{}
+	add := func(sql string, value any) {
+		args = append(args, value)
+		clauses = append(clauses, fmt.Sprintf(sql, len(args)))
+	}
+	if f.Query != "" {
+		add("(u.name ILIKE $%[1]d OR u.email ILIKE $%[1]d)", "%"+f.Query+"%")
+	}
+	switch f.Role {
+	case "admin":
+		clauses = append(clauses, "u.is_admin")
+	case "customer":
+		clauses = append(clauses, "NOT u.is_admin")
+	}
+	if f.HasCart {
+		clauses = append(clauses, sqlCartLines+" > 0")
+	}
+	if f.MinOrders != nil {
+		add(sqlOrders+" >= $%d", *f.MinOrders)
+	}
+	if f.MaxOrders != nil {
+		add(sqlOrders+" <= $%d", *f.MaxOrders)
+	}
+	if f.MinSpentJPY != nil {
+		add(sqlSpent+" >= $%d", *f.MinSpentJPY)
+	}
+	if f.MaxSpentJPY != nil {
+		add(sqlSpent+" <= $%d", *f.MaxSpentJPY)
+	}
+	if f.From != nil {
+		add("u.created_at >= $%d", *f.From)
+	}
+	if f.To != nil {
+		add("u.created_at < $%d", *f.To)
+	}
+	where := strings.Join(clauses, " AND ")
+
 	var total int
-	if err := s.pool.QueryRow(ctx, `SELECT COUNT(*) FROM users`).Scan(&total); err != nil {
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM users u WHERE `+where, args...).Scan(&total); err != nil {
 		return nil, 0, fmt.Errorf("count users: %w", err)
 	}
-	rows, err := s.pool.Query(ctx, `
+
+	args = append(args, f.Limit, f.Offset)
+	rows, err := s.pool.Query(ctx, fmt.Sprintf(`
 		SELECT u.id, u.name, u.email, u.created_at, u.is_admin,
-		       (SELECT COUNT(*) FROM cart_items ci WHERE ci.user_id = u.id),
-		       (SELECT COUNT(*) FROM orders o WHERE o.user_id = u.id),
-		       (SELECT COALESCE(SUM(o.total_jpy),0) FROM orders o
-		         WHERE o.user_id = u.id AND o.status <> 'cancelled')
-		FROM users u ORDER BY u.id LIMIT $1 OFFSET $2`, limit, offset)
+		       %s, %s, %s
+		FROM users u WHERE %s
+		ORDER BY u.id LIMIT $%d OFFSET $%d`,
+		sqlCartLines, sqlOrders, sqlSpent, where, len(args)-1, len(args)), args...)
 	if err != nil {
 		return nil, 0, fmt.Errorf("query users: %w", err)
 	}
