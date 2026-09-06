@@ -1,0 +1,74 @@
+erDiagram
+    users ||--o{ cart_items  : "has basket"
+    users ||--o{ orders      : places
+    categories ||--o{ products : groups
+    products ||--o{ product_images : "has photos"
+    products ||--o{ product_sizes  : "has S/M/L"
+    products ||--o{ cart_items     : "in basket"
+    products ||--o{ order_items    : "referenced by"
+    product_sizes ||--o{ cart_items  : "variant of"
+    product_sizes ||--o{ order_items : "variant of"
+    orders ||--|{ order_items : "snapshots"
+
+    users {
+        bigserial id PK
+        varchar   email UK "unique; login resolves it to an id"
+        varchar   password_hash "unusable sentinel - nothing checks it"
+        boolean   is_admin "granted only at API startup, never over HTTP"
+        text      address
+        timestamptz created_at
+    }
+    categories {
+        bigserial id PK
+        varchar   name UK
+        varchar   slug UK "matched loosely by resolveCategories"
+    }
+    products {
+        bigserial id PK
+        bigint    category_id FK "ON DELETE RESTRICT"
+        varchar   source_product_id UK "crawler upserts on this"
+        varchar   name
+        varchar   brand
+        text      description
+        integer   base_price_jpy "INTEGER - int32 ceiling is load-bearing"
+        boolean   is_active "survives a re-crawl; the crawler never sets it"
+    }
+    product_images {
+        bigserial id PK
+        bigint    product_id FK "ON DELETE CASCADE"
+        text      image_key "MinIO object key, never a URL"
+    }
+    product_sizes {
+        bigserial id PK
+        bigint    product_id FK "ON DELETE CASCADE"
+        varchar   source_sku_id "the stockroom ?sku= it came from"
+        varchar   size_name "S/M/L - NEVER order by this"
+        integer   price_adjustment_jpy "delta from base; the sort key"
+    }
+    cart_items {
+        bigserial id PK
+        bigint    user_id FK "CASCADE"
+        bigint    product_id FK "CASCADE"
+        bigint    product_size_id FK "RESTRICT"
+        integer   quantity "CHECK > 0"
+    }
+    orders {
+        bigserial id PK
+        bigint    user_id FK "ON DELETE RESTRICT"
+        varchar   order_number UK "RKS-YYYYMMDD-NNNN"
+        varchar   status "pending | confirmed | cancelled"
+        text      shipping_address
+        integer   total_jpy "refused above 2147483647"
+        timestamptz created_at
+    }
+    order_items {
+        bigserial id PK
+        bigint    order_id FK "CASCADE"
+        bigint    product_id FK "RESTRICT"
+        bigint    product_size_id FK "SET NULL"
+        varchar   product_name "COPIED - a re-crawl must not rewrite history"
+        varchar   size_name "COPIED"
+        integer   quantity
+        integer   unit_price_jpy "COPIED: base + adjustment at purchase time"
+        integer   subtotal_jpy
+    }

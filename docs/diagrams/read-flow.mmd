@@ -1,0 +1,54 @@
+sequenceDiagram
+    autonumber
+    actor Admin
+    participant CD as Claude Desktop
+    participant MCP as mcp-ops (Python)
+    participant API as backend-ops (Go)
+    participant DB as Postgres
+    participant S3 as MinIO
+
+    rect rgb(245,246,250)
+    Note over CD,MCP: once, at launch
+    CD->>MCP: spawn over stdio, initialize, tools/list
+    MCP-->>CD: 5 tools, each with _meta.ui.resourceUri
+    end
+
+    Admin->>CD: "pending orders over 50,000 yen from last week"
+    CD->>CD: model picks list_orders and fills the arguments
+    CD->>MCP: tools/call list_orders
+
+    rect rgb(255,247,240)
+    Note over MCP,API: first call only
+    MCP->>API: POST /api/v1/login admin@stockroom.local
+    API-->>MCP: user_id 31, is_admin true
+    end
+
+    MCP->>API: GET /admin/orders?status=pending&min_total=50000&days=7<br/>X-Stockroom-User 31
+    API->>DB: SELECT is_admin  (requireAdmin, every request)
+    API->>DB: filtered query, one round trip
+    DB-->>API: rows
+    API-->>MCP: orders + applied (the filter as understood)
+    MCP-->>CD: structuredContent
+
+    CD->>MCP: resources/read ui://stockroom/orders
+    MCP-->>CD: one self-contained HTML, MIME text/html profile=mcp-app
+    CD->>CD: render in a sandboxed iframe, push the result in
+    CD-->>Admin: panel, pre-filled from the prompt, plus the written answer
+
+    rect rgb(240,250,244)
+    Note over Admin,DB: refining inside the panel skips the model entirely
+    Admin->>CD: types a customer name in the panel
+    CD->>MCP: tools/call list_orders (from the iframe)
+    MCP->>API: GET /admin/orders?q=carol&status=pending&...
+    API->>DB: filtered query
+    MCP-->>CD: structuredContent
+    CD-->>Admin: panel re-renders, no tokens spent
+    end
+
+    rect rgb(250,245,250)
+    Note over Admin,S3: product photos load straight from the API
+    Admin->>API: GET /media/{key}  (browser, CSP-allowed origin)
+    API->>S3: object read
+    S3-->>API: bytes
+    API-->>Admin: image
+    end
