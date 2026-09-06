@@ -4,6 +4,10 @@ type Size = { size_name: string; price_adjustment_jpy: number; unit_price_jpy: n
 type Product = {
   id: number; name: string; brand: string | null; description: string | null;
   base_price_jpy: number; category: { name: string }; sizes: Size[]; images: string[];
+  /** Present when the name matched more than one product. Offered rather than
+   *  silently resolved: picking one row out of eight is how you show the
+   *  wrong product. */
+  other_matches?: { id: number; name: string }[];
 };
 
 const out = document.getElementById("out")!;
@@ -51,7 +55,13 @@ function render(p: Product & { error?: { code: string; message: string } }) {
       <thead><tr><th>Size</th><th class="num">Adjustment</th><th class="num">Unit price</th></tr></thead>
       <tbody>${sizes}</tbody>
     </table>
-    <p class="sub" style="margin-top:8px">Base ${yen(p.base_price_jpy)} · unit price = base + adjustment</p>`;
+    <p class="sub" style="margin-top:8px">Base ${yen(p.base_price_jpy)} · unit price = base + adjustment</p>
+    ${
+      p.other_matches?.length
+        ? `<p class="muted" style="margin-top:10px">Also matched:
+             ${p.other_matches.map((m) => `#${m.id} ${esc(m.name)}`).join(" · ")}</p>`
+        : ""
+    }`;
 }
 
 app.ontoolresult = (r) => render(readResult<Product>(r));

@@ -84,6 +84,44 @@ def absolute_images(payload: dict[str, Any], public_base: str) -> dict[str, Any]
     return fix(payload)
 
 
+def _score(name: str, needle: str) -> tuple[int, int]:
+    """Rank a name against what the user typed: exact, then prefix, then
+    shortest containing match -- the shortest is the most specific, so
+    "電池" prefers the battery over a product that merely mentions it."""
+    lowered, wanted = name.lower(), needle.lower()
+    if lowered == wanted:
+        return (0, len(name))
+    if lowered.startswith(wanted):
+        return (1, len(name))
+    return (2, len(name))
+
+
+async def _find_product(api: StockroomApi, text: str) -> dict[str, Any]:
+    """Resolve a name fragment to exactly one product.
+
+    Uses the admin catalog because it carries descriptions and inactive rows;
+    an admin asking about a deactivated product should still get an answer.
+    """
+    res = await api.products(text)
+    matches = [p for group in res.get("groups", []) for p in group.get("products", [])]
+    if not matches:
+        return {
+            "error": {
+                "code": "product_not_found",
+                "message": f"No product matches {text!r}.",
+            }
+        }
+    matches.sort(key=lambda p: _score(p.get("name", ""), text))
+    best = dict(matches[0])
+    if len(matches) > 1:
+        # Named so the View can offer them and the model can ask which -- a
+        # silent pick of one row out of eight is how you show the wrong product.
+        best["other_matches"] = [
+            {"id": p["id"], "name": p["name"]} for p in matches[1:6]
+        ]
+    return best
+
+
 def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
     apps = Apps()
     api = StockroomApi(settings.api_base, settings.admin_email)
@@ -329,29 +367,45 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
 
     @apps.tool(
         resource_uri=PRODUCT_URI,
-        # app-only: the model cannot see or call this. Left visible, it fans
-        # out one call per product to "work around" list_products instead of
-        # filtering. Views can still call it; the model must use list_products.
-        visibility=["app"],
         name="get_product",
         title="Get product",
         description=(
-            "Details for ONE product, identified by its numeric catalog id.\n\n"
-            "Use this only when the user asks about a single specific product "
-            "('tell me about product 34'). Do NOT call it repeatedly to enumerate "
-            "several products or to expand a category — list_products already "
-            "returns sizes, prices and images for many products in one call. "
-            "Read-only."
+            "ONE product in full, as its own panel: every photo, the "
+            "description, brand, and the S/M/L price ladder.\n\n"
+            "Use it when the user points at a single product — 'give me this "
+            "アルカリ乾電池 エボルタ 単1 4本入', 'tell me about product 34', "
+            "'show me the Evolta batteries'. `product` takes the catalog id or "
+            "any part of the name; pass the user's own words.\n\n"
+            "NEVER call this more than once for a request. To show several "
+            "products, or a category, use list_products — its result is already "
+            "complete, with sizes, prices and images for every row. Calling "
+            "this per product turns one request into dozens. Read-only."
         ),
         annotations=read_only(),
         structured_output=True,
     )
-    async def get_product(product_id: int) -> dict[str, Any]:
-        """Return a single product by its catalog id."""
+    async def get_product(
+        product: Annotated[
+            LooseText,
+            Field(
+                description=(
+                    "The catalog id (e.g. '34') or any part of the product name "
+                    "(e.g. 'エボルタ' or 'Evolta batteries')."
+                ),
+            ),
+        ],
+    ) -> dict[str, Any]:
+        """Return one product, found by catalog id or by name."""
+        text = str(product).strip()
         try:
-            data = await api.product(int(product_id))
+            if text.isdigit():
+                data = await api.product(int(text))
+            else:
+                data = await _find_product(api, text)
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
+        if "error" in data:
+            return data
         return absolute_images(data, settings.public_api_base)
 
     @apps.tool(

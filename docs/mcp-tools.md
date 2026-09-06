@@ -17,7 +17,7 @@ API and are deliberately not exposed here.
 | `get_dashboard` | `days` (1–365, default 30) | `ui://stockroom/dashboard` | `GET /api/v1/admin/stats` |
 | `list_orders` | `q?`, `status?`, `days?`, `date_from?`, `date_to?`, `min_total?`, `max_total?`, `min_quantity?`, `max_quantity?`, `limit` | `ui://stockroom/orders` | `GET /api/v1/admin/orders` |
 | `list_products` | `categories?`, `q?`, `include_inactive` (default true) | `ui://stockroom/catalog` | `GET /api/v1/admin/products` |
-| `get_product` | `product_id` | `ui://stockroom/product` | `GET /api/v1/products/{id}` |
+| `get_product` | `product` (id **or** name) | `ui://stockroom/product` | `GET /api/v1/products/{id}` or `/admin/products?q=` |
 | `list_users` | `q?`, `role?`, `has_cart?`, `min_orders?`, `max_orders?`, `min_spent?`, `max_spent?`, `date_from?`, `date_to?`, `limit` | `ui://stockroom/users` | `GET /api/v1/admin/users` |
 
 **All five are built and verified.**
@@ -127,18 +127,31 @@ request for two categories.
 presents exactly as "the category filter is broken". A `BeforeValidator` still
 accepts a list, because some hosts send one.
 
-### `get_product(product_id)`
+### `get_product(product)`
 
-One product in full: description, brand, all three sizes with unit prices, and
-its images. No equivalent tab in the frontend.
+*"Give me this アルカリ乾電池 エボルタ 単1 4本入"*, *"tell me about product 34"* —
+one product as its own panel: every photo at full size, the description, brand,
+and the S/M/L ladder with each size's adjustment shown separately.
 
-**Declared `visibility=["app"]`** — it ships in `tools/list` carrying
-`_meta.ui.visibility`, and a host that honours it offers the tool to Views but
-not to the model. Left visible, the model fanned out one call per product to
-"work around" `list_products` instead of filtering, turning one request into
-dozens. Sharpening the tool descriptions did not stop it; taking it out of the
-model's view did. Descriptions are suggestions; visibility is declared and
-host-enforced.
+`product` takes **the catalog id or any part of the name**, so the model passes
+the user's own words. Numeric input goes straight to `/products/{id}`; anything
+else searches the admin catalog — which carries descriptions and inactive rows,
+because an admin asking about a deactivated product should still get an answer.
+
+Ranking is exact name, then prefix, then the **shortest** containing match: the
+shortest is the most specific, so `電池` prefers the battery itself over a
+product that merely mentions batteries. When several match, the rest come back
+as `other_matches` and the panel lists them rather than silently resolving —
+picking one row out of eight is how you show the wrong product.
+
+> **This was `visibility=["app"]` until it was needed.** Hidden from the model
+> it fanned out no calls, but it also could not answer "show me this product" —
+> and no View called it either, so it was dead. It is model-visible again, with
+> the guardrail moved into the descriptions: this one says *never call it more
+> than once per request*, and `list_products` says *its result is already
+> complete*. That is weaker than hiding the tool. If per-product fan-out
+> returns, the structural fix is to restore `visibility=["app"]` and accept
+> that single-product prompts render the catalog instead.
 
 ### `list_users(q?, role?, has_cart?, min_orders?, max_orders?, min_spent?, max_spent?, date_from?, date_to?, limit)`
 
