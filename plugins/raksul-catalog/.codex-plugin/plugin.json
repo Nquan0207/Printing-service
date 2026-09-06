@@ -1,14 +1,14 @@
 {
   "name": "raksul-catalog",
-  "version": "0.1.0+codex.20260904173144",
-  "description": "Render a database-backed mock storefront inside ChatGPT with local sign-in, cart, and simulated checkout.",
+  "version": "0.1.0+codex.20260905123306",
+  "description": "Render the Stockroom database storefront through its loopback Go backend.",
   "author": {
     "name": "RAKSUL Catalog local developer"
   },
   "interface": {
-    "displayName": "RAKSUL Catalog",
-    "shortDescription": "Use an embedded database mock storefront.",
-    "longDescription": "An embedded MCP App using only the local PostgreSQL product snapshot, with mock sign-in, session-owned carts, and explicit approve-or-reject simulated payments. Never opens the supplier website.",
+    "displayName": "RAKSUL Stockroom",
+    "shortDescription": "Shop the local Stockroom database mock.",
+    "longDescription": "An embedded MCP App using the Stockroom Go API as its only access to PostgreSQL and MinIO, with demo users, sized products, persisted carts, quotes, and explicit mock-order confirmation.",
     "developerName": "RAKSUL Catalog local developer",
     "category": "Productivity",
     "capabilities": [
@@ -16,9 +16,9 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Render the embedded RAKSUL database storefront here. Do not open any external website.",
-      "Use the RAKSUL mini-app to mock-sign-in and browse products from PostgreSQL.",
-      "Help me build a mock cart, then ask me explicitly before approving or rejecting payment."
+      "Render the embedded RAKSUL Stockroom storefront here. Do not open any supplier website.",
+      "Use the Stockroom mini-app to select a demo user and browse sized products.",
+      "Build a Stockroom cart, show the mock quote, then ask me before placing or rejecting the order."
     ]
   },
   "mcpServers": "./.mcp.json"

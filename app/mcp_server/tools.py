@@ -1,283 +1,120 @@
 from __future__ import annotations
 
+import hashlib
+import json
+import secrets
+import threading
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.database.connection import session_scope
-from app.repositories.product_repository import ProductRepository
-from app.repositories.shopping_repository import ShoppingRepository
-from app.services.product_service import ProductService
-from app.services.shopping_service import ShoppingError, ShoppingService
+from app.mcp_server.stockroom_client import StockroomAPIError, StockroomClient
 
-CATALOG_SCOPE = {
-    "data_source": "fixed_catalog_snapshot",
-    "catalog_complete": False,
-    "real_time": False,
-}
+SCOPE = {"data_source": "stockroom_postgresql_via_go_api", "real_time": False, "mock_checkout": True}
 
 
-def _product_payload(product) -> dict[str, Any]:
-    return {
-        "id": product.id,
-        "source_product_id": product.source_product_id,
-        "name": product.name,
-        "brand": product.brand,
-        "industry": product.category.industry.slug,
-        "industry_name": product.category.industry.name,
-        "category": product.category.slug,
-        "category_name": product.category.name,
-        "price_jpy": product.price_jpy,
-        "description": product.description,
-        "colors": product.colors or [],
-        "sizes": product.sizes or [],
-        "stock_status": product.stock_status,
-        "printing_available": product.printing_available,
-        "image_url": product.image_url,
-        "scraped_at": product.scraped_at.isoformat() if product.scraped_at else None,
-    }
+def utcnow(): return datetime.now(timezone.utc)
 
 
-def search_products_handler(
-    query: str | None = None,
-    industry: str | None = None,
-    category: str | None = None,
-    brand: str | None = None,
-    color: str | None = None,
-    min_price: int | None = None,
-    max_price: int | None = None,
-    limit: int = 10,
-) -> dict[str, Any]:
-    """Search the limited local RAKSUL catalog snapshot."""
-    with session_scope() as session:
-        service = ProductService(ProductRepository(session))
-        products = service.search_products(
-            query=query,
-            industry=industry,
-            category=category,
-            brand=brand,
-            color=color,
-            min_price=min_price,
-            max_price=max_price,
-            limit=limit,
-        )
-        results = [_product_payload(product) for product in products]
-
-    if not results:
-        return {
-            "status": "no_match_in_current_catalog",
-            "results": [],
-            "result_count": 0,
-            "message": (
-                "No matching product was found in the current catalog snapshot. "
-                "This does not mean it is absent from the full RAKSUL website."
-            ),
-            "scope": CATALOG_SCOPE,
-        }
-    return {
-        "status": "ok",
-        "results": results,
-        "result_count": len(results),
-        "scope": CATALOG_SCOPE,
-    }
+@dataclass
+class Confirmation:
+    token: str
+    owner_key: str
+    user_id: int | None
+    shipping_address: str
+    cart_digest: str
+    expires_at: datetime
+    decision: str | None = None
+    order: dict[str, Any] | None = None
 
 
-def get_product_handler(product_id: int) -> dict[str, Any]:
-    """Get one product from the local snapshot by database ID."""
-    with session_scope() as session:
-        service = ProductService(ProductRepository(session))
-        product = service.get_product(product_id)
-        payload = _product_payload(product) if product else None
+class CommerceState:
+    def __init__(self):
+        self.users: dict[str, dict[str, Any]] = {}
+        self.confirmations: dict[str, Confirmation] = {}
+        self.lock = threading.Lock()
 
-    if payload is None:
-        return {
-            "status": "not_found_in_current_catalog",
-            "product": None,
-            "message": f"Product ID {product_id} is not in the current snapshot.",
-            "scope": CATALOG_SCOPE,
-        }
-    return {"status": "ok", "product": payload, "scope": CATALOG_SCOPE}
+    def user_id(self, owner_key: str) -> int | None:
+        user = self.users.get(owner_key)
+        return user["user_id"] if user else None
 
 
-def list_categories_handler() -> dict[str, Any]:
-    """List industries and categories represented by the local snapshot."""
-    with session_scope() as session:
-        service = ProductService(ProductRepository(session))
-        categories = service.list_categories()
-        results = [
-            {
-                "industry": item.industry.slug,
-                "industry_name": item.industry.name,
-                "category": item.slug,
-                "category_name": item.name,
-                "enabled": item.enabled,
-            }
-            for item in categories
-        ]
-    return {"status": "ok", "categories": results, "scope": CATALOG_SCOPE}
+STATE, CLIENT = CommerceState(), StockroomClient()
 
 
-def get_catalog_info_handler() -> dict[str, Any]:
-    """Describe snapshot coverage and unsupported real-time fields."""
-    with session_scope() as session:
-        stats = ProductRepository(session).stats()
-    return {
-        "status": "ok",
-        "source": "RAKSUL Apparel",
-        "catalog_type": "fixed_snapshot",
-        "catalog_complete": False,
-        "product_count": stats["products"],
-        "category_count": stats["categories"],
-        "industry_count": stats["industries"],
-        "supported_fields": [
-            "name", "brand", "industry", "category", "price_jpy",
-            "colors", "sizes", "description", "image_url",
-        ],
-        "unsupported_fields": [
-            "live_stock", "shipping_fee", "delivery_date",
-            "printing_quote", "real_time_price",
-        ],
-        "scope": CATALOG_SCOPE,
-    }
+def success(**values): return {"status": "ok", **values, "scope": SCOPE}
 
 
-def _cart_payload(cart) -> dict[str, Any]:
-    items = [ShoppingService._line_snapshot(item) for item in cart.items]
-    return {
-        "id": cart.id,
-        "status": cart.status,
-        "items": items,
-        "item_count": sum(item["quantity"] for item in items),
-        "total_jpy": sum(item["line_total_jpy"] for item in items),
-        "created_at": cart.created_at.isoformat() if cart.created_at else None,
-        "updated_at": cart.updated_at.isoformat() if cart.updated_at else None,
-    }
+def failure(exc: Exception):
+    if isinstance(exc, StockroomAPIError):
+        return {"status": "error", "error": {"code": exc.code, "message": str(exc)}, "scope": SCOPE}
+    return {"status": "error", "error": {"code": "internal", "message": str(exc)}, "scope": SCOPE}
 
 
-def _order_payload(order) -> dict[str, Any]:
-    return {
-        "id": order.id,
-        "cart_id": order.cart_id,
-        "status": order.status,
-        "total_jpy": order.total_jpy,
-        "items": order.line_items,
-        "mock_payment": True,
-        "message": "This is a simulation. No payment method was collected and no money moved.",
-        "receipt": order.status == "approved",
-        "created_at": order.created_at.isoformat() if order.created_at else None,
-        "decided_at": order.decided_at.isoformat() if order.decided_at else None,
-    }
+def run(action):
+    try: return action()
+    except Exception as exc: return failure(exc)
 
 
-def _session_payload(mock_session) -> dict[str, Any]:
-    return {
-        "id": mock_session.id,
-        "customer": {
-            "id": mock_session.customer.id,
-            "name": mock_session.customer.name,
-            "email": mock_session.customer.email,
-        },
-        "created_at": mock_session.created_at.isoformat() if mock_session.created_at else None,
-        "expires_at": mock_session.expires_at.isoformat(),
-        "mock_authentication": True,
-    }
+def mock_sign_in_handler(owner_key: str, name: str, email: str):
+    def action():
+        user = CLIENT.login(email=email, name=name)
+        with STATE.lock: STATE.users[owner_key] = user
+        return success(user=user, mock_authentication=True)
+    return run(action)
 
 
-def _shopping_action(action) -> dict[str, Any]:
-    try:
-        with session_scope() as session:
-            service = ShoppingService(ShoppingRepository(session))
-            kind, value = action(service)
-            if kind == "cart":
-                payload = _cart_payload(value)
-            elif kind == "order":
-                payload = _order_payload(value)
-            elif kind == "session":
-                payload = _session_payload(value)
-            elif kind == "checkout":
-                order, confirmation = value
-                payload = {
-                    "order": _order_payload(order),
-                    "confirmation": {
-                        "token": confirmation.token,
-                        "expires_at": confirmation.expires_at.isoformat(),
-                        "instruction": (
-                            "Summarize this mock order and ask the user to explicitly approve or reject it. "
-                            "Do not call decide_mock_payment until the user makes that decision."
-                        ),
-                    },
-                }
-            else:
-                raise RuntimeError(f"Unsupported shopping payload kind: {kind}")
-        if kind == "checkout":
-            return {"status": "confirmation_required", **payload, "scope": CATALOG_SCOPE}
-        return {"status": "ok", kind: payload, "scope": CATALOG_SCOPE}
-    except ShoppingError as exc:
-        return {
-            "status": "error",
-            "error": {"code": exc.code, "message": str(exc)},
-            "scope": CATALOG_SCOPE,
-        }
+def search_products_handler(query=None, category=None, min_price=None, max_price=None, limit=20, per_category=None):
+    def action():
+        result = CLIENT.search_products(q=query, category=category, min_price=min_price, max_price=max_price, limit=limit, per_category=per_category)
+        return {"status": "ok" if result.get("count") else "no_match_in_current_catalog", **result, "scope": SCOPE}
+    return run(action)
 
 
-def mock_sign_in_handler(name: str, email: str) -> dict[str, Any]:
-    return _shopping_action(lambda service: ("session", service.mock_sign_in(name, email)))
+def get_product_handler(product_id: int): return run(lambda: success(product=CLIENT.product(product_id)))
+def list_categories_handler(): return run(lambda: success(**CLIENT.categories()))
+def get_quote_handler(owner_key: str, product_id: int, size_id: int, quantity: int): return run(lambda: success(quote=CLIENT.quote(product_id, size_id, quantity, STATE.user_id(owner_key))))
+def get_cart_handler(owner_key: str): return run(lambda: success(cart=CLIENT.cart(STATE.user_id(owner_key))))
+def add_to_cart_handler(owner_key: str, product_id: int, size_id: int, quantity: int): return run(lambda: success(cart=CLIENT.add_to_cart(product_id, size_id, quantity, STATE.user_id(owner_key))))
+def remove_cart_item_handler(owner_key: str, item_id: int): return run(lambda: success(cart=CLIENT.remove_cart_item(item_id, STATE.user_id(owner_key))))
 
 
-def get_mock_session_handler(session_id: str) -> dict[str, Any]:
-    return _shopping_action(lambda service: ("session", service.get_session(session_id)))
+def _cart_digest(cart: dict[str, Any]) -> str:
+    return hashlib.sha256(json.dumps(cart, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()).hexdigest()
 
 
-def create_cart_handler(session_id: str) -> dict[str, Any]:
-    return _shopping_action(lambda service: ("cart", service.create_cart(session_id)))
+def prepare_order_handler(owner_key: str, shipping_address: str):
+    def action():
+        address = " ".join((shipping_address or "").split())
+        if not address: raise StockroomAPIError("invalid_request", "Shipping address is required.", 400)
+        cart = CLIENT.cart(STATE.user_id(owner_key))
+        if not cart.get("items"): raise StockroomAPIError("cart_empty", "The cart is empty.", 409)
+        token = secrets.token_urlsafe(32)
+        confirmation = Confirmation(token, owner_key, STATE.user_id(owner_key), address, _cart_digest(cart), utcnow() + timedelta(minutes=15))
+        with STATE.lock: STATE.confirmations[token] = confirmation
+        return {"status": "confirmation_required", "cart": cart, "confirmation": {"token": token, "expires_at": confirmation.expires_at.isoformat(), "shipping_address": address}, "message": "Ask the user to explicitly approve or reject this mock order before calling place_order.", "scope": SCOPE}
+    return run(action)
 
 
-def get_cart_handler(session_id: str, cart_id: str) -> dict[str, Any]:
-    return _shopping_action(lambda service: ("cart", service.get_cart(session_id, cart_id)))
+def place_order_handler(owner_key: str, confirmation_token: str, decision: str):
+    def action():
+        value = (decision or "").strip().lower()
+        if value not in {"approve", "reject"}: raise StockroomAPIError("invalid_decision", "Decision must be approve or reject.", 400)
+        with STATE.lock: confirmation = STATE.confirmations.get(confirmation_token)
+        if not confirmation or confirmation.owner_key != owner_key: raise StockroomAPIError("invalid_confirmation", "Confirmation token is invalid.", 403)
+        if confirmation.decision:
+            if confirmation.decision != value: raise StockroomAPIError("decision_conflict", "This confirmation already has the opposite final decision.", 409)
+            return success(decision=value, order=confirmation.order, idempotent=True)
+        if confirmation.expires_at <= utcnow(): raise StockroomAPIError("confirmation_expired", "Confirmation expired. Review the cart again.", 409)
+        if value == "reject":
+            confirmation.decision = "reject"
+            return success(decision="reject", order=None, message="Mock order rejected; the database cart was preserved.")
+        cart = CLIENT.cart(confirmation.user_id)
+        if _cart_digest(cart) != confirmation.cart_digest: raise StockroomAPIError("cart_changed", "The cart changed after review. Prepare the order again.", 409)
+        order = CLIENT.place_order(confirmation.shipping_address, confirmation.user_id)
+        confirmation.decision, confirmation.order = "approve", order
+        return success(decision="approve", order=order, message="Mock order confirmed; no real payment occurred.")
+    return run(action)
 
 
-def add_cart_item_handler(
-    session_id: str,
-    cart_id: str,
-    product_id: int,
-    quantity: int = 1,
-    color: str | None = None,
-    size: str | None = None,
-) -> dict[str, Any]:
-    return _shopping_action(
-        lambda service: (
-            "cart",
-            service.add_item(session_id, cart_id, product_id, quantity, color, size),
-        )
-    )
-
-
-def update_cart_item_handler(session_id: str, cart_id: str, item_id: int, quantity: int) -> dict[str, Any]:
-    return _shopping_action(
-        lambda service: ("cart", service.update_item(session_id, cart_id, item_id, quantity))
-    )
-
-
-def remove_cart_item_handler(session_id: str, cart_id: str, item_id: int) -> dict[str, Any]:
-    return _shopping_action(
-        lambda service: ("cart", service.remove_item(session_id, cart_id, item_id))
-    )
-
-
-def create_mock_checkout_handler(session_id: str, cart_id: str) -> dict[str, Any]:
-    return _shopping_action(
-        lambda service: ("checkout", service.create_checkout(session_id, cart_id))
-    )
-
-
-def get_mock_order_handler(session_id: str, order_id: str) -> dict[str, Any]:
-    return _shopping_action(lambda service: ("order", service.get_order(session_id, order_id)))
-
-
-def decide_mock_payment_handler(
-    session_id: str, order_id: str, confirmation_token: str, decision: str
-) -> dict[str, Any]:
-    return _shopping_action(
-        lambda service: (
-            "order",
-            service.decide_payment(session_id, order_id, confirmation_token, decision),
-        )
-    )
+def get_order_handler(owner_key: str, order_number: str): return run(lambda: success(order=CLIENT.order(order_number, STATE.user_id(owner_key))))
