@@ -421,38 +421,38 @@ customer, or `init-db` dropped `users` while `api` kept running, so nobody holds
 ordering and pricing invariants, and the traps that have already bitten.
 
 ```bash
-cd backend-ops  && go build ./... && go vet ./...   # there are no Go tests
-cd frontend-ops && npm run dev                      # 127.0.0.1:5173, proxies to :8080
-cd frontend-ops && node render-check.mjs            # headless Chrome, fails on console errors
-cd mcp-ops/views && npm run build                   # rebuild the Views after a UI change
+python3 ~/.codex/skills/.system/plugin-creator/scripts/update_plugin_cachebuster.py \
+  "$(pwd)/plugins/raksul-catalog"
+
+/opt/homebrew/bin/codex plugin add \
+  raksul-catalog@raksul-printing
 ```
 
-`render-check.mjs` is the closest thing to a test suite: it signs in as both
-roles, opens the product gallery, edits a size price, and reports console
-errors. Use it after UI changes — `curl` cannot execute JS, so `GET /` only ever
-returns an empty `<div id="root">`.
+Sau đó thoát hoàn toàn ChatGPT Desktop, mở lại và tạo chat mới. Không cần chạy
+hai lệnh này khi chỉ crawl thêm dữ liệu hoặc cập nhật dữ liệu PostgreSQL/MinIO.
 
-[backend-ops/schema.sql](backend-ops/schema.sql) is the single source of truth
-for the schema; the crawler's `init-db` reads that exact file, so schema changes
-need no crawler edit.
+## Cấu hình
 
-### What's left
+Các biến đầy đủ nằm trong `.env.example`:
 
-The commerce MCP server: five tools (`search_products`, `get_quote`,
-`add_to_cart`, `place_order`, `get_order`), their `ui://` Views, and the
-**confirm-gate on `place_order`** — [docs/requirement.md](docs/requirement.md)
-requires it to be reachable only from the confirm View, and the Go service
-deliberately does not enforce that because it cannot see which View called it.
+- `STOCKROOM_DATABASE_URL` và `MINIO_*` cho crawler chạy trên host.
+- `CRAWL_*` cho giới hạn, số ảnh và delay.
+- `STOCKROOM_API_URL` cho MCP.
+- `MCP_HOST`, `MCP_PORT`, `MCP_TRANSPORT` cho MCP server.
+- `OLLAMA_URL`, `OLLAMA_MODEL` và `CHAT_*` cho local chat host.
 
----
+Docker Compose sử dụng hostname nội bộ `postgres` và `minio`; không thay các
+URL đó bằng địa chỉ host.
 
-## Prior work — ignore
-
-[app/](app/) is an earlier MVP that crawls **apparel.raksul.com** into a
-`raksul_db` database via SQLAlchemy, with its own chat-only MCP server and a
-local Ollama chat host. Different site, schema and product. Its database is no
-longer in the compose file, so its CLI will fail. [legacy/](legacy/),
-[plugins/](plugins/), [tests/](tests/) and the root [Makefile](Makefile) belong
-to that MVP too — the Makefile's targets still invoke `stockroom_crawler.cli`
-from the repository root, where the package no longer lives. Do not extend any
-of it.
+make infra
+make crawl
+make api
+make health
+make mcp
+make mcp-http
+make ollama-pull
+make chat
+make chat-health
+make test-chat-e2e
+make test
+make test-e2e
