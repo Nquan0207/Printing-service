@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Stockroom Local Chat</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <main class="app-shell">
+    <header class="topbar">
+      <div>
+        <p class="eyebrow">LOCAL OLLAMA + MCP</p>
+        <h1>Stockroom shopping assistant</h1>
+      </div>
+      <div class="top-actions">
+        <span id="modelBadge" class="badge">qwen3:8b</span>
+        <button id="logoutButton" class="ghost" hidden>Log out</button>
+      </div>
+    </header>
+
+    <section id="loginView" class="login-card">
+      <div>
+        <p class="eyebrow">DEMO SIGN-IN</p>
+        <h2>Choose your local shopping identity</h2>
+        <p>No password is used or verified. Your cart and mock orders are stored in the local Stockroom database.</p>
+      </div>
+      <form id="loginForm">
+        <label>Name<input id="loginName" maxlength="100" placeholder="Quan"></label>
+        <label>Email<input id="loginEmail" maxlength="320" type="email" required placeholder="quan@example.com"></label>
+        <button class="primary" type="submit">Start chatting</button>
+      </form>
+      <p id="loginError" class="error" hidden></p>
+    </section>
+
+    <section id="chatView" class="workspace" hidden>
+      <section class="conversation">
+        <div class="identity" id="identity"></div>
+        <div id="messages" class="messages" aria-live="polite"></div>
+        <form id="chatForm" class="composer">
+          <textarea id="chatInput" rows="2" maxlength="4000" placeholder="Ask for products, prices, or help building a cart…" required></textarea>
+          <button id="sendButton" class="primary" type="submit">Send</button>
+        </form>
+      </section>
+
+      <aside class="side-panel">
+        <section id="cartPanel" class="panel"></section>
+        <section id="checkoutPanel" class="panel" hidden></section>
+      </aside>
+    </section>
+  </main>
+  <script src="/static/app.js" defer></script>
+</body>
+</html>
