@@ -215,6 +215,20 @@ export default function Storefront() {
     }
   }
 
+  const signOut = () =>
+    run(() => callTool("sign_out"), () => {
+      // Drop every trace of the previous shopper from the panel: their cart
+      // stays with their account, and showing it to whoever is next would be
+      // both wrong and a small privacy leak.
+      setUser(null);
+      setCart(null);
+      setConfirmation(null);
+      setOrder(null);
+      setName("");
+      setEmail("");
+      setMessage({ text: "Signed out. Browsing as a guest." });
+    });
+
   const add = (productId: number, sizeId: number, quantity: number) =>
     run(() => callTool("add_to_cart", { product_id: productId, size_id: sizeId, quantity }), (out) => {
       seedCommerce(out);
@@ -296,9 +310,18 @@ export default function Storefront() {
           {/* Browsing and the cart are anonymous, exactly like a real shop.
               Identity is asked for once, at checkout, and a shopper the host
               already signed in is never asked at all. */}
-          <Text size="xs" c="dimmed">
-            {user ? <>Signed in as <b>{user.name}</b> · {user.email}</> : "Browsing as guest"}
-          </Text>
+          <Group gap="xs" align="center">
+            <Text size="xs" c="dimmed">
+              {user ? <>Signed in as <b>{user.name}</b> · {user.email}</> : "Browsing as guest"}
+            </Text>
+            {user && (
+              // Without this, the first identity of the session was permanent:
+              // there was no way to buy as somebody else.
+              <Button size="compact-xs" variant="subtle" disabled={busy} onClick={signOut}>
+                Sign out
+              </Button>
+            )}
+          </Group>
 
           {/* Every category, always. Clicking one loads it whole and pages
               through it here rather than asking the model for more. */}

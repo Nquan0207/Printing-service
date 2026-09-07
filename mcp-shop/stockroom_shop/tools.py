@@ -141,6 +141,24 @@ def _claim_cart(owner_key: str, name: str, email: str) -> dict[str, Any]:
     return real
 
 
+def sign_out_handler(owner_key: str):
+    """Forget who the shopper is, without touching what they bought.
+
+    The cart stays with the account it belongs to -- signing out must not carry
+    one person's basket into the next person's session, and it must still be
+    there when they sign back in. A pending confirmation goes too: it was
+    issued against a user_id that is no longer the one at the keyboard.
+    """
+    def action():
+        with STATE.lock:
+            STATE.users.pop(owner_key, None)
+            for token, confirmation in list(STATE.confirmations.items()):
+                if confirmation.owner_key == owner_key and not confirmation.decision:
+                    STATE.confirmations.pop(token, None)
+        return success(user=None, cart=None, message="Signed out. Browsing as a guest.")
+    return run(action)
+
+
 def mock_sign_in_handler(owner_key: str, name: str, email: str):
     def action():
         # Signing in mid-basket must not drop the basket, so this goes through

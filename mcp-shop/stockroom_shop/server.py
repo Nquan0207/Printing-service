@@ -13,6 +13,7 @@ from mcp.types import ToolAnnotations
 
 from stockroom_shop.storefront_widget import STOREFRONT_HTML, STOREFRONT_URI
 from stockroom_shop.tools import (
+    sign_out_handler,
     STATE,
     add_to_cart_handler,
     get_cart_handler,
@@ -196,8 +197,25 @@ def open_storefront(
 
 @mcp.tool(title="Mock sign in", annotations=annotations(False, False), meta=APP_CALLABLE, structured_output=True)
 def mock_sign_in(name: str, email: str, ctx: Context) -> dict[str, Any]:
-    """Select or create a demo user in the Stockroom database; no password or real authentication."""
+    """Switch to a different demo shopper. Selects or creates a database user; no password.
+
+    DO NOT call this to start shopping. Browsing and the cart need no identity,
+    and checkout collects a name and email on its own -- asking up front is the
+    behaviour this replaced. Use it only when the shopper explicitly asks to
+    sign in or to switch to another account. Anything already in a guest cart
+    follows them to the account they name.
+    """
     return mock_sign_in_handler(owner(ctx), name, email)
+
+
+@mcp.tool(title="Sign out", annotations=annotations(False, False), meta=APP_CALLABLE, structured_output=True)
+def sign_out(ctx: Context) -> dict[str, Any]:
+    """Forget the current shopper so the next order can be placed as someone else.
+
+    Their cart stays with their account and is waiting when they sign back in;
+    the session becomes an anonymous guest again.
+    """
+    return sign_out_handler(owner(ctx))
 
 
 @mcp.tool(title="Search Stockroom products", annotations=annotations(True), meta=APP_CALLABLE, structured_output=True)

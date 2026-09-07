@@ -63,7 +63,7 @@ def reset(monkeypatch):
 
 def test_tools_resource_and_contract():
     tools = {tool.name: tool for tool in mcp._tool_manager.list_tools()}
-    assert {"open_storefront", "mock_sign_in", "search_products", "get_product", "list_categories", "get_quote", "get_cart", "add_to_cart", "remove_cart_item", "prepare_order", "place_order", "get_order"} <= tools.keys()
+    assert {"open_storefront", "mock_sign_in", "sign_out", "search_products", "get_product", "list_categories", "get_quote", "get_cart", "add_to_cart", "remove_cart_item", "prepare_order", "place_order", "get_order"} <= tools.keys()
     assert tools["open_storefront"].meta["ui"]["resourceUri"] == STOREFRONT_URI
     assert tools["place_order"].annotations.readOnlyHint is False
     resources = {str(r.uri): r for r in mcp._resource_manager.list_resources()}
@@ -162,3 +162,42 @@ def test_owner_key_never_reaches_the_client(monkeypatch):
         assert owner not in repr(payload)
         assert "owner_key" not in repr(payload)
         assert "guest" not in repr(payload.get("user") or {})
+
+
+def test_sign_out_switches_shopper_without_leaking_the_cart(monkeypatch):
+    """The first identity of a session must not be permanent."""
+    reset(monkeypatch)
+    owner = "shared-session"
+
+    handlers.mock_sign_in_handler(owner, "Kaka", "kaka@gmail.com")
+    handlers.add_to_cart_handler(owner, 1, 2, 2)
+    assert handlers.get_cart_handler(owner)["cart"]["item_count"] == 1
+
+    out = handlers.sign_out_handler(owner)
+    assert out["user"] is None
+    assert handlers.STATE.user(owner) is None
+
+    # A fresh guest, not Kaka's basket -- carrying it over would show one
+    # shopper's items to the next.
+    assert handlers.get_cart_handler(owner)["cart"]["item_count"] == 0
+    handlers.add_to_cart_handler(owner, 1, 2, 1)
+    prepared = handlers.prepare_order_handler(owner, "Osaka", "Mimi", "mimi@gmail.com")
+    assert prepared["user"]["email"] == "mimi@gmail.com"
+    assert prepared["cart"]["item_count"] == 1
+
+    # Kaka's cart is still Kaka's when they come back.
+    handlers.mock_sign_in_handler(owner, "Kaka", "kaka@gmail.com")
+    assert handlers.get_cart_handler(owner)["cart"]["item_count"] == 1
+
+
+def test_sign_out_drops_a_pending_confirmation(monkeypatch):
+    """A confirmation is a capability tied to one shopper's user_id."""
+    reset(monkeypatch)
+    owner = "session"
+    handlers.mock_sign_in_handler(owner, "Kaka", "kaka@gmail.com")
+    handlers.add_to_cart_handler(owner, 1, 2, 1)
+    token = handlers.prepare_order_handler(owner, "Tokyo")["confirmation"]["token"]
+
+    handlers.sign_out_handler(owner)
+    refused = handlers.place_order_handler(owner, token, "approve")
+    assert refused["error"]["code"] == "invalid_confirmation"
