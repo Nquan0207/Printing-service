@@ -30,3 +30,11 @@ def load_view(name: str) -> str:
 
 
 STOREFRONT_HTML = load_view("storefront.html")
+
+# Focused panels beside the full storefront: one order, one job. A shopper
+# asking "what did I buy" should not be handed a catalog to scroll past.
+ORDERS_URI = "ui://widget/raksul-orders-v1.html"
+CART_URI = "ui://widget/raksul-cart-v1.html"
+
+ORDERS_HTML = load_view("orders.html")
+CART_HTML = load_view("cart.html")

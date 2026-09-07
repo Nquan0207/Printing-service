@@ -73,7 +73,11 @@ def _public_user(owner_key: str) -> dict[str, Any] | None:
     user = STATE.user(owner_key)
     if not user or user.get("guest"):
         return None
-    return {k: v for k, v in user.items() if k != "guest"}
+    # Name and email only. The login response also carries user_id, is_admin
+    # and created; none of that is the panel's business, and everything in this
+    # envelope reaches the model and the browser. The id in particular is the
+    # key every cart and order row is scoped by -- it stays server-side.
+    return {"name": user.get("name", ""), "email": user["email"]}
 
 
 def failure(exc: Exception):

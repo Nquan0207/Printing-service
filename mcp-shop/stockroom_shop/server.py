@@ -11,7 +11,14 @@ import weakref
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
-from stockroom_shop.storefront_widget import STOREFRONT_HTML, STOREFRONT_URI
+from stockroom_shop.storefront_widget import (
+    CART_HTML,
+    CART_URI,
+    ORDERS_HTML,
+    ORDERS_URI,
+    STOREFRONT_HTML,
+    STOREFRONT_URI,
+)
 from stockroom_shop.tools import (
     order_history_handler,
     sign_out_handler,
@@ -156,6 +163,45 @@ def storefront_widget() -> str:
     return STOREFRONT_HTML
 
 
+def _panel_meta(uri: str, description: str) -> dict[str, Any]:
+    """Resource meta for a focused panel.
+
+    connectDomains stays empty: these panels fetch nothing themselves, every
+    read goes back through tools/call. resourceDomains is what lets product
+    images load from the Go service, a different origin than the iframe.
+    """
+    return {
+        "ui": {
+            "prefersBorder": True,
+            "csp": {"connectDomains": [], "resourceDomains": RESOURCE_DOMAINS},
+        },
+        "openai/widgetDescription": description,
+        "openai/widgetCSP": {"connect_domains": [], "resource_domains": RESOURCE_DOMAINS},
+    }
+
+
+@mcp.resource(
+    ORDERS_URI,
+    name="RAKSUL Stockroom order history",
+    description="The shopper's own past orders with their line items.",
+    mime_type="text/html;profile=mcp-app",
+    meta=_panel_meta(ORDERS_URI, "Past orders for the signed-in shopper."),
+)
+def orders_widget() -> str:
+    return ORDERS_HTML
+
+
+@mcp.resource(
+    CART_URI,
+    name="RAKSUL Stockroom cart",
+    description="The current cart, with removal and the mock confirmation.",
+    mime_type="text/html;profile=mcp-app",
+    meta=_panel_meta(CART_URI, "The shopper's current cart and mock checkout."),
+)
+def cart_widget() -> str:
+    return CART_HTML
+
+
 @mcp.tool(
     title="Open embedded RAKSUL Stockroom storefront",
     annotations=annotations(True),
@@ -278,7 +324,16 @@ def get_quote(product_id: int, size_id: int, quantity: int, ctx: Context) -> dic
     return get_quote_handler(owner(ctx), product_id, size_id, quantity)
 
 
-@mcp.tool(title="Get cart", annotations=annotations(True), meta=APP_CALLABLE, structured_output=True)
+@mcp.tool(
+    title="Get cart",
+    annotations=annotations(True),
+    meta={
+        "ui": {"resourceUri": CART_URI, "visibility": ["model", "app"]},
+        "openai/outputTemplate": CART_URI,
+        "openai/widgetAccessible": True,
+    },
+    structured_output=True,
+)
 def get_cart(ctx: Context) -> dict[str, Any]:
     return get_cart_handler(owner(ctx))
 
@@ -320,7 +375,16 @@ def place_order(confirmation_token: str, decision: str, ctx: Context) -> dict[st
     return place_order_handler(owner(ctx), confirmation_token, decision)
 
 
-@mcp.tool(title="Order history", annotations=annotations(True), meta=APP_CALLABLE, structured_output=True)
+@mcp.tool(
+    title="Order history",
+    annotations=annotations(True),
+    meta={
+        "ui": {"resourceUri": ORDERS_URI, "visibility": ["model", "app"]},
+        "openai/outputTemplate": ORDERS_URI,
+        "openai/widgetAccessible": True,
+    },
+    structured_output=True,
+)
 def order_history(ctx: Context, limit: int = 20) -> dict[str, Any]:
     """The shopper's own past orders, newest first, with their line items.
 

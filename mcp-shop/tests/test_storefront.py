@@ -2,7 +2,7 @@ from datetime import timedelta
 
 from stockroom_shop import tools as handlers
 from stockroom_shop.server import mcp
-from stockroom_shop.storefront_widget import STOREFRONT_HTML, STOREFRONT_URI
+from stockroom_shop.storefront_widget import CART_URI, ORDERS_URI, STOREFRONT_HTML, STOREFRONT_URI
 
 
 class FakeClient:
@@ -71,12 +71,23 @@ def test_tools_resource_and_contract():
     assert tools["place_order"].annotations.readOnlyHint is False
     resources = {str(r.uri): r for r in mcp._resource_manager.list_resources()}
     assert resources[STOREFRONT_URI].mime_type == "text/html;profile=mcp-app"
+    # Focused panels beside the full storefront, each bound to the tool that
+    # fills it -- a tool without its own ui:// renders as text.
+    assert resources[ORDERS_URI].mime_type == "text/html;profile=mcp-app"
+    assert resources[CART_URI].mime_type == "text/html;profile=mcp-app"
+    assert tools["order_history"].meta["ui"]["resourceUri"] == ORDERS_URI
+    assert tools["get_cart"].meta["ui"]["resourceUri"] == CART_URI
     assert resources[STOREFRONT_URI].meta["ui"]["csp"]["resourceDomains"] == ["http://127.0.0.1:8080"]
 
 
 def test_backend_flow_approval_and_rejection(monkeypatch):
     fake = reset(monkeypatch); owner = "session-a"
-    assert handlers.mock_sign_in_handler(owner, "Alice", "ALICE@example.com")["user"]["user_id"] == 7
+    # The payload identifies the shopper by name and email; the user_id it is
+    # scoped by stays server-side, so assert that where it actually lives.
+    assert handlers.mock_sign_in_handler(owner, "Alice", "ALICE@example.com")["user"] == {
+        "name": "Alice", "email": "alice@example.com",
+    }
+    assert handlers.STATE.user_id(owner) == 7
     assert handlers.search_products_handler()["count"] == 1
     assert handlers.add_to_cart_handler(owner, 1, 2, 3)["cart"]["total_jpy"] == 300
     prepared = handlers.prepare_order_handler(owner, "Tokyo")
@@ -148,6 +159,24 @@ def test_two_guests_do_not_share_a_cart(monkeypatch):
     handlers.add_to_cart_handler("guest-a", 1, 2, 1)
     handlers.add_to_cart_handler("guest-b", 1, 2, 1)
     assert handlers.STATE.user_id("guest-a") != handlers.STATE.user_id("guest-b")
+
+
+def test_identity_in_a_payload_is_name_and_email_only(monkeypatch):
+    """Everything in an envelope reaches the model and the browser.
+
+    The login response also carries user_id, is_admin and created. The id is
+    what every cart and order row is scoped by, so it stays server-side; the
+    other two are simply not the panel's business.
+    """
+    reset(monkeypatch)
+    owner = "session"
+    handlers.mock_sign_in_handler(owner, "Kaka", "kaka@example.com")
+    for payload in (
+        handlers.get_cart_handler(owner),
+        handlers.search_products_handler(owner_key=owner),
+        handlers.add_to_cart_handler(owner, 1, 2, 1),
+    ):
+        assert sorted(payload["user"]) == ["email", "name"], payload["user"]
 
 
 def test_owner_key_never_reaches_the_client(monkeypatch):

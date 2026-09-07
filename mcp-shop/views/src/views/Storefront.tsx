@@ -4,6 +4,7 @@ import {
   Paper, SimpleGrid, Stack, Text, TextInput, Title,
 } from "@mantine/core";
 import { app, callTool, initialToolOutput, isOpenAIHost, unwrap } from "../lib/mcp";
+import { OrdersPanel } from "../components/OrdersPanel";
 
 type Size = { id: number; size_name: string; unit_price_jpy: number };
 type Product = {
@@ -113,6 +114,9 @@ export default function Storefront() {
 
   const [user, setUser] = useState<User | null>(null);
   const [cart, setCart] = useState<Cart | null>(null);
+  /** Which half of the shop the left column is showing. The cart column stays
+   *  put either way -- it is the thing you keep glancing at. */
+  const [tab, setTab] = useState<"catalog" | "orders">("catalog");
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
   const [busy, setBusy] = useState(false);
@@ -292,7 +296,17 @@ export default function Storefront() {
   return (
     <Stack gap="sm" p="md">
       <Group justify="space-between" align="center">
-        <Title order={1} size="h4">RAKSUL Stockroom</Title>
+        <Group gap="xs" align="center">
+          <Title order={1} size="h4">RAKSUL Stockroom</Title>
+          <Button size="compact-xs" variant={tab === "catalog" ? "filled" : "subtle"}
+                  onClick={() => setTab("catalog")}>
+            Catalog
+          </Button>
+          <Button size="compact-xs" variant={tab === "orders" ? "filled" : "subtle"}
+                  onClick={() => setTab("orders")}>
+            My orders
+          </Button>
+        </Group>
         <Badge color="raksul" variant="light">DATABASE MOCK</Badge>
       </Group>
 
@@ -324,8 +338,10 @@ export default function Storefront() {
           </Group>
 
           {/* Every category, always. Clicking one loads it whole and pages
-              through it here rather than asking the model for more. */}
-          <Group gap={6}>
+              through it here rather than asking the model for more.
+              Hidden on the orders tab: category chips filter a catalog that is
+              not on screen. */}
+          <Group gap={6} display={tab === "orders" ? "none" : undefined}>
             {categories.map((c) => (
               <Button
                 key={c.slug}
@@ -343,7 +359,7 @@ export default function Storefront() {
             ))}
           </Group>
 
-          <Group gap="xs" wrap="nowrap">
+          <Group gap="xs" wrap="nowrap" display={tab === "orders" ? "none" : undefined}>
             <TextInput size="xs" flex={1} placeholder="Search across every category…"
               value={query} onChange={(e) => setQuery(e.currentTarget.value)}
               onKeyDown={(e) => e.key === "Enter" && runSearch()} />
@@ -356,31 +372,42 @@ export default function Storefront() {
 
           <Group align="flex-start" gap="md" wrap="wrap">
             <Stack gap="xs" style={{ flex: "1 1 380px", minWidth: 0 }}>
-              <Group justify="space-between" align="center">
-                <Title order={2} size="h5">{activeName}</Title>
-                {shown.length > 0 && (
-                  <Text size="xs" c="dimmed">
-                    {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, shown.length)} of {shown.length}
-                  </Text>
-                )}
-              </Group>
-
-              {shown.length === 0 ? (
-                <Text size="xs" c="dimmed">
-                  {busy ? "Loading…" : "No products here."}
-                </Text>
+              {/* Order history loads only once it is asked for -- a shopper
+                  browsing the catalog should not pay for a query they never
+                  looked at. */}
+              {tab === "orders" ? (
+                // Mounted only when asked for, so a shopper browsing the
+                // catalog never pays for a query they did not look at.
+                <OrdersPanel />
               ) : (
                 <>
-                  <SimpleGrid cols={{ base: 1, xs: 2, md: 3 }} spacing="xs">
-                    {pageItems.map((p) => (
-                      <ProductCard key={p.id} product={p} busy={busy} onAdd={add} />
-                    ))}
-                  </SimpleGrid>
-                  {pageCount > 1 && (
-                    <Group justify="center" mt="xs">
-                      {/* Paging is local: the whole category is already here. */}
-                      <Pagination size="sm" total={pageCount} value={page} onChange={setPage} withEdges />
-                    </Group>
+                  <Group justify="space-between" align="center">
+                    <Title order={2} size="h5">{activeName}</Title>
+                    {shown.length > 0 && (
+                      <Text size="xs" c="dimmed">
+                        {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, shown.length)} of {shown.length}
+                      </Text>
+                    )}
+                  </Group>
+
+                  {shown.length === 0 ? (
+                    <Text size="xs" c="dimmed">
+                      {busy ? "Loading…" : "No products here."}
+                    </Text>
+                  ) : (
+                    <>
+                      <SimpleGrid cols={{ base: 1, xs: 2, md: 3 }} spacing="xs">
+                        {pageItems.map((p) => (
+                          <ProductCard key={p.id} product={p} busy={busy} onAdd={add} />
+                        ))}
+                      </SimpleGrid>
+                      {pageCount > 1 && (
+                        <Group justify="center" mt="xs">
+                          {/* Paging is local: the whole category is already here. */}
+                          <Pagination size="sm" total={pageCount} value={page} onChange={setPage} withEdges />
+                        </Group>
+                      )}
+                    </>
                   )}
                 </>
               )}
