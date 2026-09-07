@@ -161,6 +161,7 @@ def storefront_widget() -> str:
     structured_output=True,
 )
 def open_storefront(
+    ctx: Context,
     query: str | None = None,
     category: str | None = None,
     limit: int = 60,
@@ -184,8 +185,12 @@ def open_storefront(
     # one is opened, so a large payload here would only burn model context.
     if per_category is None and not query and not category:
         per_category = 3
+    # owner_key rides along so the envelope carries the shopper's identity:
+    # this result is what the widget renders from, and without it a signed-in
+    # shopper would be shown the sign-in form again on every open.
     return search_products_handler(
-        query=query, category=category, limit=limit, per_category=per_category
+        query=query, category=category, limit=limit, per_category=per_category,
+        owner_key=owner(ctx),
     )
 
 
@@ -197,6 +202,7 @@ def mock_sign_in(name: str, email: str, ctx: Context) -> dict[str, Any]:
 
 @mcp.tool(title="Search Stockroom products", annotations=annotations(True), meta=APP_CALLABLE, structured_output=True)
 def search_products(
+    ctx: Context,
     query: str | None = None,
     category: str | None = None,
     min_price: int | None = None,
@@ -223,7 +229,9 @@ def search_products(
     An empty result means no match, not an empty shop -- retry with the word in
     `category` before telling the user the catalog has nothing.
     """
-    return search_products_handler(query, category, min_price, max_price, limit, per_category)
+    return search_products_handler(
+        query, category, min_price, max_price, limit, per_category, owner_key=owner(ctx)
+    )
 
 
 @mcp.tool(title="Get Stockroom product", annotations=annotations(True), meta=APP_CALLABLE, structured_output=True)
@@ -268,9 +276,23 @@ def remove_cart_item(item_id: int, ctx: Context) -> dict[str, Any]:
 
 
 @mcp.tool(title="Prepare mock order", annotations=annotations(False, False), meta=APP_CALLABLE, structured_output=True)
-def prepare_order(shipping_address: str, ctx: Context) -> dict[str, Any]:
-    """Snapshot cart and address into a 15-minute confirmation challenge; ask the user before proceeding."""
-    return prepare_order_handler(owner(ctx), shipping_address)
+def prepare_order(
+    shipping_address: str,
+    ctx: Context,
+    name: str = "",
+    email: str = "",
+) -> dict[str, Any]:
+    """Snapshot cart and address into a 15-minute confirmation challenge; ask the user before proceeding.
+
+    Checkout is the ONE point a shopper is asked who they are -- browsing and
+    the cart are anonymous, exactly like a normal shop. Pass `name` and `email`
+    the first time a guest checks out. A shopper who is already identified
+    needs neither, and must not be asked again.
+
+    A `428 identity_required` reply means the shopper is still a guest: ask for
+    their name and email once, then call this again with them.
+    """
+    return prepare_order_handler(owner(ctx), shipping_address, name, email)
 
 
 @mcp.tool(title="Place or reject mock order", annotations=annotations(False, True), meta=APP_CALLABLE, structured_output=True)

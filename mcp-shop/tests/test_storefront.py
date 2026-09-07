@@ -9,21 +9,49 @@ class FakeClient:
     def __init__(self):
         self.cart_value = {"items": [], "item_count": 0, "total_jpy": 0}
         self.orders = []
+        # Per-email ids, so a guest account and the account it is claimed by
+        # are distinguishable -- with one shared id the claim path is untestable.
+        self.ids: dict[str, int] = {}
+        self.carts: dict[int, list] = {}
+        self.next_item_id = 100
 
-    def login(self, email, name): return {"user_id": 7, "email": email.lower(), "name": name, "created": True}
+    def login(self, email, name):
+        key = email.lower()
+        created = key not in self.ids
+        self.ids.setdefault(key, 7 + len(self.ids))
+        return {"user_id": self.ids[key], "email": key, "name": name, "created": created}
     def categories(self): return {"categories": [{"id": 1, "slug": "bags", "name": "Bags"}]}
     def search_products(self, **filters): return {"groups": [{"category": {"id": 1, "slug": "bags", "name": "Bags"}, "count": 1, "products": [{"id": 1, "name": "Bag", "base_price_jpy": 100, "sizes": [{"id": 2, "size_name": "S", "unit_price_jpy": 100}], "images": []}]}], "count": 1}
     def product(self, product_id): return self.search_products()["groups"][0]["products"][0]
     def quote(self, product_id, size_id, quantity, user_id=None): return {"product_id": product_id, "product_name": "Bag", "size_id": size_id, "size_name": "S", "quantity": quantity, "unit_price_jpy": 100, "subtotal_jpy": 100 * quantity, "currency": "JPY", "notes": ["Mock pricing."]}
-    def cart(self, user_id=None): return self.cart_value
-    def add_to_cart(self, product_id, size_id, quantity, user_id=None):
-        self.cart_value = {"items": [{"id": 9, "product_id": product_id, "product_name": "Bag", "size_id": size_id, "size_name": "S", "quantity": quantity, "unit_price_jpy": 100, "subtotal_jpy": 100 * quantity}], "item_count": 1, "total_jpy": 100 * quantity}
+    def _rebuild(self, user_id):
+        items = self.carts.setdefault(user_id, [])
+        self.cart_value = {"items": items, "item_count": len(items),
+                           "total_jpy": sum(i["subtotal_jpy"] for i in items)}
         return self.cart_value
+
+    def cart(self, user_id=None):
+        # user_id=None never comes from the handlers -- they always resolve a
+        # guest or real id. It is the tests inspecting the fake directly, and
+        # it means "whichever cart was touched last".
+        return self.cart_value if user_id is None else self._rebuild(user_id)
+
+    def add_to_cart(self, product_id, size_id, quantity, user_id=None):
+        self.next_item_id += 1
+        self.carts.setdefault(user_id, []).append({
+            "id": self.next_item_id, "product_id": product_id, "product_name": "Bag",
+            "size_id": size_id, "size_name": "S", "quantity": quantity,
+            "unit_price_jpy": 100, "subtotal_jpy": 100 * quantity,
+        })
+        return self._rebuild(user_id)
+
     def remove_cart_item(self, item_id, user_id=None):
-        self.cart_value = {"items": [], "item_count": 0, "total_jpy": 0}; return self.cart_value
+        self.carts[user_id] = [i for i in self.carts.get(user_id, []) if i["id"] != item_id]
+        return self._rebuild(user_id)
     def place_order(self, shipping_address, user_id=None):
-        order = {"order_number": "RKS-TEST-0001", "status": "confirmed", "shipping_address": shipping_address, "total_jpy": self.cart_value["total_jpy"], "items": self.cart_value["items"]}
-        self.orders.append(order); self.cart_value = {"items": [], "item_count": 0, "total_jpy": 0}; return order
+        cart = self._rebuild(user_id)
+        order = {"order_number": "RKS-TEST-0001", "status": "confirmed", "shipping_address": shipping_address, "total_jpy": cart["total_jpy"], "items": list(cart["items"])}
+        self.orders.append(order); self.carts[user_id] = []; self._rebuild(user_id); return order
     def order(self, order_number, user_id=None): return self.orders[-1]
 
 
@@ -80,3 +108,57 @@ def test_widget_is_embedded_and_has_no_supplier_navigation():
         assert marker in STOREFRONT_HTML
     assert "window.open(" not in STOREFRONT_HTML
     assert "raksul.com" not in STOREFRONT_HTML
+
+
+def test_guest_can_shop_and_is_asked_once_at_checkout(monkeypatch):
+    """Browsing and the cart are anonymous; identity is collected at checkout."""
+    reset(monkeypatch)
+    owner = "guest-session"
+
+    # Nothing identifies the shopper, and browsing creates no account at all.
+    assert handlers.search_products_handler(owner_key=owner)["user"] is None
+    assert handlers.STATE.users == {}
+
+    # The cart works, but now a guest account exists to own the rows: without
+    # one the API would fall back to its default user and every guest would
+    # share a single basket.
+    assert handlers.add_to_cart_handler(owner, 1, 2, 3)["cart"]["total_jpy"] == 300
+    assert handlers.STATE.is_guest(owner)
+    assert handlers.get_cart_handler(owner)["user"] is None, "a guest account is not an identity"
+
+    # Checkout is the one place the shopper is asked.
+    refused = handlers.prepare_order_handler(owner, "Tokyo")
+    assert refused["error"]["code"] == "identity_required"
+
+    claimed = handlers.prepare_order_handler(owner, "Tokyo", "Ada", "ada@example.com")
+    assert claimed["status"] == "confirmation_required"
+    assert claimed["user"]["email"] == "ada@example.com"
+    assert claimed["cart"]["total_jpy"] == 300, "the guest cart must survive the claim"
+
+    # And having been identified, they are never asked again.
+    again = handlers.prepare_order_handler(owner, "Osaka")
+    assert again["status"] == "confirmation_required"
+
+
+def test_two_guests_do_not_share_a_cart(monkeypatch):
+    reset(monkeypatch)
+    handlers.add_to_cart_handler("guest-a", 1, 2, 1)
+    handlers.add_to_cart_handler("guest-b", 1, 2, 1)
+    assert handlers.STATE.user_id("guest-a") != handlers.STATE.user_id("guest-b")
+
+
+def test_owner_key_never_reaches_the_client(monkeypatch):
+    """Everything in an envelope reaches the model and the browser, and the
+    owner key is the capability the whole session is keyed on."""
+    reset(monkeypatch)
+    owner = "secret-owner-key"
+    handlers.mock_sign_in_handler(owner, "Ada", "ada@example.com")
+    for payload in (
+        handlers.search_products_handler(owner_key=owner),
+        handlers.get_cart_handler(owner),
+        handlers.add_to_cart_handler(owner, 1, 2, 1),
+        handlers.prepare_order_handler(owner, "Tokyo"),
+    ):
+        assert owner not in repr(payload)
+        assert "owner_key" not in repr(payload)
+        assert "guest" not in repr(payload.get("user") or {})

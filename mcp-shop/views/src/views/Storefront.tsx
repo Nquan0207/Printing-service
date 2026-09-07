@@ -215,16 +215,6 @@ export default function Storefront() {
     }
   }
 
-  const signIn = () =>
-    run(async () => {
-      const signedIn = await callTool("mock_sign_in", { name, email });
-      const withCart = await callTool("get_cart");
-      return { ...signedIn, cart: withCart.cart };
-    }, (out) => {
-      seedCommerce(out);
-      setMessage({ text: "Database user and cart loaded." });
-    });
-
   const add = (productId: number, sizeId: number, quantity: number) =>
     run(() => callTool("add_to_cart", { product_id: productId, size_id: sizeId, quantity }), (out) => {
       seedCommerce(out);
@@ -240,7 +230,12 @@ export default function Storefront() {
     });
 
   const prepare = () =>
-    run(() => callTool("prepare_order", { shipping_address: address }), (out) => {
+    run(() => callTool("prepare_order", {
+      shipping_address: address,
+      // Sent only while still a guest; the server ignores them once the
+      // shopper is identified, so a returning buyer is never re-asked.
+      ...(user ? {} : { name: name.trim(), email: email.trim() }),
+    }), (out) => {
       seedCommerce(out);
       setOrder(null);
       setMessage({ text: "Review the confirmation before approving." });
@@ -296,26 +291,13 @@ export default function Storefront() {
         <Alert color="red" variant="light" title="MCP App bridge error">{bridgeError}</Alert>
       )}
 
-      {!user ? (
-        <Paper p="md" radius="md">
-          <Stack gap="xs">
-            <Title order={2} size="h5">Select demo user</Title>
-            <Text size="xs" c="dimmed">
-              This creates or selects a database user without a password.
-            </Text>
-            <Group gap="xs" grow align="flex-end" wrap="nowrap">
-              <TextInput size="xs" label="Name" value={name}
-                onChange={(e) => setName(e.currentTarget.value)} />
-              <TextInput size="xs" label="Email" type="email" required value={email}
-                onChange={(e) => setEmail(e.currentTarget.value)} />
-              <Button size="xs" maw={110} loading={busy} onClick={signIn}>Continue</Button>
-            </Group>
-          </Stack>
-        </Paper>
-      ) : (
+      {(
         <>
+          {/* Browsing and the cart are anonymous, exactly like a real shop.
+              Identity is asked for once, at checkout, and a shopper the host
+              already signed in is never asked at all. */}
           <Text size="xs" c="dimmed">
-            Demo user <b>{user.name}</b> · {user.email}
+            {user ? <>Signed in as <b>{user.name}</b> · {user.email}</> : "Browsing as guest"}
           </Text>
 
           {/* Every category, always. Clicking one loads it whole and pages
@@ -405,7 +387,22 @@ export default function Storefront() {
                   </Group>
                   <TextInput size="xs" placeholder="Mock shipping address" value={address}
                     onChange={(e) => setAddress(e.currentTarget.value)} />
-                  <Button size="xs" disabled={busy || !cart.items.length} onClick={prepare}>
+                  {!user && (
+                    <>
+                      <Text size="xs" c="dimmed">Who is this order for?</Text>
+                      <Group gap="xs" grow wrap="nowrap">
+                        <TextInput size="xs" placeholder="Name" value={name}
+                          onChange={(e) => setName(e.currentTarget.value)} />
+                        <TextInput size="xs" placeholder="Email" type="email" value={email}
+                          onChange={(e) => setEmail(e.currentTarget.value)} />
+                      </Group>
+                    </>
+                  )}
+                  <Button
+                    size="xs"
+                    disabled={busy || !cart.items.length || (!user && !email.trim())}
+                    onClick={prepare}
+                  >
                     Review mock order
                   </Button>
                 </Stack>
