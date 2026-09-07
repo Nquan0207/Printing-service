@@ -164,6 +164,70 @@ func cartTx(ctx context.Context, tx pgx.Tx, userID int64) (Cart, error) {
 	return out, rows.Err()
 }
 
+// UserOrders lists one shopper's own orders, newest first.
+//
+// Items are fetched for the whole page in a second query rather than one per
+// order: a history of twenty orders would otherwise be twenty-one round trips.
+func (s *Store) UserOrders(ctx context.Context, userID int64, limit, offset int) ([]Order, int, error) {
+	var total int
+	if err := s.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM orders WHERE user_id = $1`, userID).Scan(&total); err != nil {
+		return nil, 0, fmt.Errorf("count user orders: %w", err)
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		SELECT id, order_number, status, shipping_address, total_jpy, created_at
+		FROM orders WHERE user_id = $1
+		ORDER BY id DESC LIMIT $2 OFFSET $3`, userID, limit, offset)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query user orders: %w", err)
+	}
+	defer rows.Close()
+
+	orders := []Order{}
+	ids := []int64{}
+	index := map[int64]int{}
+	for rows.Next() {
+		var o Order
+		var id int64
+		if err := rows.Scan(&id, &o.OrderNumber, &o.Status, &o.ShippingAddress,
+			&o.TotalJPY, &o.CreatedAt); err != nil {
+			return nil, 0, fmt.Errorf("scan user order: %w", err)
+		}
+		o.Items = []OrderItem{}
+		index[id] = len(orders)
+		ids = append(ids, id)
+		orders = append(orders, o)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, err
+	}
+	if len(ids) == 0 {
+		return orders, total, nil
+	}
+
+	itemRows, err := s.pool.Query(ctx, `
+		SELECT order_id, product_id, product_name, size_name, quantity,
+		       unit_price_jpy, subtotal_jpy
+		FROM order_items WHERE order_id = ANY($1) ORDER BY order_id, id`, ids)
+	if err != nil {
+		return nil, 0, fmt.Errorf("query user order items: %w", err)
+	}
+	defer itemRows.Close()
+	for itemRows.Next() {
+		var orderID int64
+		var it OrderItem
+		if err := itemRows.Scan(&orderID, &it.ProductID, &it.ProductName, &it.SizeName,
+			&it.Quantity, &it.UnitPriceJPY, &it.SubtotalJPY); err != nil {
+			return nil, 0, err
+		}
+		if i, ok := index[orderID]; ok {
+			orders[i].Items = append(orders[i].Items, it)
+		}
+	}
+	return orders, total, itemRows.Err()
+}
+
 // Order returns one order, scoped to its owner.
 func (s *Store) Order(ctx context.Context, userID int64, orderNumber string) (Order, error) {
 	var out Order

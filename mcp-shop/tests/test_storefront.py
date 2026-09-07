@@ -8,7 +8,7 @@ from stockroom_shop.storefront_widget import STOREFRONT_HTML, STOREFRONT_URI
 class FakeClient:
     def __init__(self):
         self.cart_value = {"items": [], "item_count": 0, "total_jpy": 0}
-        self.orders = []
+        self.placed = []   # rows, not the orders() method
         # Per-email ids, so a guest account and the account it is claimed by
         # are distinguishable -- with one shared id the claim path is untestable.
         self.ids: dict[str, int] = {}
@@ -50,9 +50,12 @@ class FakeClient:
         return self._rebuild(user_id)
     def place_order(self, shipping_address, user_id=None):
         cart = self._rebuild(user_id)
-        order = {"order_number": "RKS-TEST-0001", "status": "confirmed", "shipping_address": shipping_address, "total_jpy": cart["total_jpy"], "items": list(cart["items"])}
-        self.orders.append(order); self.carts[user_id] = []; self._rebuild(user_id); return order
-    def order(self, order_number, user_id=None): return self.orders[-1]
+        order = {"order_number": "RKS-TEST-%04d" % (len(self.placed) + 1), "status": "confirmed", "shipping_address": shipping_address, "total_jpy": cart["total_jpy"], "items": list(cart["items"]), "user_id": user_id}
+        self.placed.append(order); self.carts[user_id] = []; self._rebuild(user_id); return order
+    def order(self, order_number, user_id=None): return self.placed[-1]
+    def orders(self, user_id=None, limit=20):
+        mine = [o for o in self.placed if o.get("user_id") == user_id]
+        return {"orders": list(reversed(mine)), "total": len(mine), "limit": limit, "offset": 0}
 
 
 def reset(monkeypatch):
@@ -63,7 +66,7 @@ def reset(monkeypatch):
 
 def test_tools_resource_and_contract():
     tools = {tool.name: tool for tool in mcp._tool_manager.list_tools()}
-    assert {"open_storefront", "mock_sign_in", "sign_out", "search_products", "get_product", "list_categories", "get_quote", "get_cart", "add_to_cart", "remove_cart_item", "prepare_order", "place_order", "get_order"} <= tools.keys()
+    assert {"open_storefront", "mock_sign_in", "sign_out", "order_history", "search_products", "get_product", "list_categories", "get_quote", "get_cart", "add_to_cart", "remove_cart_item", "prepare_order", "place_order", "get_order"} <= tools.keys()
     assert tools["open_storefront"].meta["ui"]["resourceUri"] == STOREFRONT_URI
     assert tools["place_order"].annotations.readOnlyHint is False
     resources = {str(r.uri): r for r in mcp._resource_manager.list_resources()}
@@ -79,7 +82,7 @@ def test_backend_flow_approval_and_rejection(monkeypatch):
     prepared = handlers.prepare_order_handler(owner, "Tokyo")
     approved = handlers.place_order_handler(owner, prepared["confirmation"]["token"], "approve")
     assert approved["order"]["order_number"] == "RKS-TEST-0001"
-    assert len(fake.orders) == 1
+    assert len(fake.placed) == 1
     assert handlers.place_order_handler(owner, prepared["confirmation"]["token"], "approve")["idempotent"] is True
     assert handlers.place_order_handler(owner, prepared["confirmation"]["token"], "reject")["error"]["code"] == "decision_conflict"
 
@@ -201,3 +204,30 @@ def test_sign_out_drops_a_pending_confirmation(monkeypatch):
     handlers.sign_out_handler(owner)
     refused = handlers.place_order_handler(owner, token, "approve")
     assert refused["error"]["code"] == "invalid_confirmation"
+
+
+def test_order_history_is_scoped_and_needs_an_identity(monkeypatch):
+    reset(monkeypatch)
+    owner = "session"
+
+    # A guest has no history: checkout is the first point an order is attached
+    # to anyone, so an empty list would read as "you never ordered".
+    assert handlers.order_history_handler(owner)["error"]["code"] == "identity_required"
+    handlers.add_to_cart_handler(owner, 1, 2, 1)
+    assert handlers.order_history_handler(owner)["error"]["code"] == "identity_required"
+
+    # Buy as Kaka.
+    prepared = handlers.prepare_order_handler(owner, "Tokyo", "Kaka", "kaka@example.com")
+    handlers.place_order_handler(owner, prepared["confirmation"]["token"], "approve")
+    mine = handlers.order_history_handler(owner)
+    assert mine["total"] == 1
+    assert mine["user"]["email"] == "kaka@example.com"
+
+    # Someone else's history is theirs, not Kaka's.
+    handlers.sign_out_handler(owner)
+    handlers.mock_sign_in_handler(owner, "Mimi", "mimi@example.com")
+    assert handlers.order_history_handler(owner)["total"] == 0
+
+    # And it is hidden again once nobody is signed in.
+    handlers.sign_out_handler(owner)
+    assert handlers.order_history_handler(owner)["error"]["code"] == "identity_required"

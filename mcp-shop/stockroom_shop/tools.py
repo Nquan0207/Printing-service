@@ -242,4 +242,26 @@ def place_order_handler(owner_key: str, confirmation_token: str, decision: str):
     return run(action)
 
 
+def order_history_handler(owner_key: str, limit: int = 20):
+    """A shopper's own past orders.
+
+    Requires an identity, and a guest is not one: they have no history because
+    checkout is the first point anything is attached to a person. Rather than
+    return an empty list -- which reads as "you have never ordered" -- say what
+    is missing, the same 428 the checkout uses.
+    """
+    def action():
+        if STATE.is_guest(owner_key) or STATE.user_id(owner_key) is None:
+            raise StockroomAPIError(
+                "identity_required",
+                "Ask the shopper for the email they ordered with, then sign them in to show their history.",
+                428,
+            )
+        return success(
+            **CLIENT.orders(STATE.user_id(owner_key), max(1, min(int(limit), 100))),
+            owner_key=owner_key,
+        )
+    return run(action)
+
+
 def get_order_handler(owner_key: str, order_number: str): return run(lambda: success(order=CLIENT.order(order_number, STATE.user_id(owner_key)), owner_key=owner_key))

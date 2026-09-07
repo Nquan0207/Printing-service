@@ -13,6 +13,7 @@ from mcp.types import ToolAnnotations
 
 from stockroom_shop.storefront_widget import STOREFRONT_HTML, STOREFRONT_URI
 from stockroom_shop.tools import (
+    order_history_handler,
     sign_out_handler,
     STATE,
     add_to_cart_handler,
@@ -317,6 +318,21 @@ def prepare_order(
 def place_order(confirmation_token: str, decision: str, ctx: Context) -> dict[str, Any]:
     """Use only after explicit user approval or rejection. Approval writes the backend order; rejection preserves the cart."""
     return place_order_handler(owner(ctx), confirmation_token, decision)
+
+
+@mcp.tool(title="Order history", annotations=annotations(True), meta=APP_CALLABLE, structured_output=True)
+def order_history(ctx: Context, limit: int = 20) -> dict[str, Any]:
+    """The shopper's own past orders, newest first, with their line items.
+
+    Use it for "my orders", "what did I buy", "where is my order", "order
+    history". Scoped to whoever is signed in on this session -- it takes no
+    user id, so it can never be pointed at somebody else's history.
+
+    A `428 identity_required` reply means they are still a guest: a guest has
+    no history, because checkout is the first point an order is attached to a
+    person. Ask which email they ordered with and sign them in.
+    """
+    return order_history_handler(owner(ctx), limit)
 
 
 @mcp.tool(title="Get mock order", annotations=annotations(True), meta=APP_CALLABLE, structured_output=True)
