@@ -63,10 +63,13 @@ export default function Dashboard() {
   if (!stats) return <Shell title="Stockroom operations" sub="Loading…">{null}</Shell>;
   if (stats.error) {
     return (
-      <Shell title="Stockroom operations" sub="Could not load figures">
-        isAuthRequired(stats)
+      <Shell
+        title="Stockroom operations"
+        sub={isAuthRequired(stats) ? "Restricted" : "Could not load figures"}
+      >
+        {isAuthRequired(stats)
           ? <AdminGate app={app} onSignedIn={() => pick(days)} />
-          : <ErrorPanel error={stats.error} />
+          : <ErrorPanel error={stats.error} />}
       </Shell>
     );
   }
