@@ -3,36 +3,12 @@ services:
     image: postgres:17
     environment:
       POSTGRES_DB: stockroom
-      POSTGRES_DB: stockroom
       POSTGRES_USER: raksul
       POSTGRES_PASSWORD: raksul_password
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
-      - stockroom_minio_data:/data
-    healthcheck:
-      test: ["CMD-SHELL", "mc ready local || exit 1"]
-      interval: 5s
-      timeout: 5s
-      retries: 10
-
-  api:
-    build: ./go-backend
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
-    environment:
-      STOCKROOM_ADDR: "0.0.0.0:8080"
-      STOCKROOM_DATABASE_URL: "postgresql://raksul:raksul_password@postgres:5432/stockroom"
-      MINIO_ENDPOINT: "minio:9000"
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: stockroom-media
-      MINIO_SECURE: "false"
-    ports:
-      - "127.0.0.1:8080:8080"
+      - raksul_postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U raksul -d stockroom"]
       interval: 5s

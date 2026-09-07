@@ -28,7 +28,7 @@ frontend-ops/ (React)   mcp-ops/ (Python, read-only admin)
 
 ## Run everything
 
-Full setup instructions for a human are in [SETUP.md](SETUP.md); the
+Full setup instructions for a human are in [README.md](README.md); the
 prompt-to-response path is traced in [docs/flow.md](docs/flow.md).
 
 ```bash
@@ -186,7 +186,7 @@ catalog.
 [app/](app/) is an earlier MVP crawling **apparel.raksul.com** into a `raksul_db` database via
 SQLAlchemy, with its own chat-only MCP server. Different site, schema, and product. Its
 database is no longer in the compose file, so its CLI will fail. Do not extend it.
-[README.md](README.md) documents only that MVP.
+`legacy/`, `plugins/`, `tests/` and the root `Makefile` belong to it too.
 
 ## What's left
 
