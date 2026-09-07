@@ -216,8 +216,23 @@ iframe sandbox. An empty array is normal; render a placeholder.
 
 ## `GET /api/v1/products`
 
-Query: `q`, `category` (slug), `min_price`, `max_price`, `limit` (total,
-default 20, max 100), `per_category` (per group).
+Query: `q`, `category`, `min_price`, `max_price`, `limit` (total, default 20,
+max 100), `per_category` (per group).
+
+`category` is **multi-valued**: `?category=a&category=b`, `?category=a,b`, or
+the plural spelling `?categories=a,b` all work, and filtering happens in SQL
+(`slug = ANY(...)`). Omit it for every category.
+
+**Values need not be slugs.** An exact slug wins outright; otherwise the word is
+matched against slug and display name with case and separators folded, so
+`copy paper`, `コピー用紙` and `copy_paper_toner` all reach the same category.
+Exact-first matters: without it a short slug would drag in every longer slug
+containing it, silently widening a filter the caller spelled correctly.
+
+This exists to delete a round trip. A caller that must send slugs has to fetch
+`/api/v1/categories` first — two requests to render one filtered panel, the
+first of which it did not want. Resolving here, where the category list is
+already loaded to build the response, makes it one.
 
 `q` matches name and description, case-insensitive. Filters combine with AND.
 
@@ -238,12 +253,23 @@ per category without regrouping client-side:
       "products": [ { "…Product without description…" } ]
     }
   ],
-  "count": 12
+  "count": 12,
+  "selected_categories": ["store_supplies"]
 }
 ```
 
 Groups are ordered by product count descending, then category name; products
 within a group by `id`. A flat list is `groups.flatMap(g => g.products)`.
+
+`selected_categories` reports what the requested words resolved to; empty means
+no filter, so every category is present. Words that resolved to nothing come
+back as `unmatched_categories`, present only when non-empty — that is what
+separates "nothing matched" from "this category is empty". When *every* word is
+unmatched the response is empty rather than the whole catalog; returning
+everything reads as a broken filter.
+
+Together with `groups`, that is enough to render filter controls, so a consumer
+never needs the full category list alongside its data.
 
 A category with no matches is **omitted entirely**, never returned as an empty
 group — a section header with nothing under it is a UI bug. `category=<slug>`
@@ -257,12 +283,13 @@ responsible for saying "nothing in this snapshot" rather than "does not exist".
 
 ```json
 { "categories": [
-    { "id": 3, "slug": "store_supplies", "name": "店舗用品" }
+    { "id": 3, "slug": "store_supplies", "name": "店舗用品", "product_count": 9 }
 ] }
 ```
 
 Only categories that actually hold products, so filter chips never render a
-dead option.
+dead option. `product_count` is here and nowhere else — it lets a caller build
+those chips without fetching the catalog to count rows itself.
 
 ## `POST /api/v1/quote`
 

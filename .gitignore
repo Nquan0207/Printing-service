@@ -4,6 +4,8 @@ __pycache__/
 .pytest_cache/
 *.py[cod]
 
-# Local service artifacts
-go-backend/api
-.DS_Store
+crawler/.venv/
+crawler/.env
+
+node_modules/
+dist/

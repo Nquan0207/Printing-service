@@ -1,0 +1,47 @@
+graph TB
+    subgraph offline["run once, offline"]
+        SITE["stockroom.raksul.com<br/><i>schema.org JSON-LD only</i>"]
+        CRAWL["crawler<br/><i>Python, own venv</i>"]
+    end
+
+    subgraph hosts["AI hosts"]
+        CLAUDE["Claude Desktop<br/><i>spawns the server over stdio</i>"]
+        IFRAME["ui:// View<br/><i>sandboxed iframe, deny-by-default CSP</i>"]
+    end
+
+    subgraph browser["browser"]
+        SHOP["frontend-ops<br/><i>React + Mantine</i>"]
+    end
+
+    subgraph docker["docker compose - every port bound to 127.0.0.1"]
+        WEB["web<br/>nginx :3000"]
+        MCP["mcp-ops<br/>Python :3001"]
+        API["backend-ops<br/>Go :8080<br/><b>the only process touching SQL or MinIO</b>"]
+        PG[("Postgres :5432")]
+        MINIO[("MinIO :9000<br/>private bucket")]
+    end
+
+    SITE -->|"crawl, once"| CRAWL
+    CRAWL -->|"psycopg, reads backend-ops/schema.sql"| PG
+    CRAWL -->|"content-addressed keys"| MINIO
+
+    SHOP -->|"/api, /media"| WEB
+    WEB -->|"proxy, one origin so no CORS"| API
+
+    CLAUDE <-->|"JSON-RPC over stdio"| MCP
+    CLAUDE -->|"resources/read ui://"| MCP
+    CLAUDE -.->|"renders + pushes tool result"| IFRAME
+    IFRAME -->|"callServerTool, host-mediated<br/><b>model not involved</b>"| CLAUDE
+    IFRAME -->|"img src, CSP-allowed origin"| API
+
+    MCP -->|"HTTP + X-Stockroom-User (admin)<br/><b>one call per tool call</b>"| API
+
+    API --> PG
+    API -->|"proxied at GET /media/{key}"| MINIO
+
+    classDef owner fill:#ffe9e9,stroke:#ef1f1f,stroke-width:2px
+    classDef store fill:#eef2ff,stroke:#6b8afd
+    classDef offlinebox fill:#f6f6f6,stroke:#bbb,stroke-dasharray:4 3
+    class API owner
+    class PG,MINIO store
+    class SITE,CRAWL offlinebox

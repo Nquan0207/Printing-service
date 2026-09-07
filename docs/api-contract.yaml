@@ -45,6 +45,8 @@ info:
     - Image fields are same-origin **paths** (`/media/...`), never MinIO URLs;
       an iframe sandbox cannot fetch an arbitrary host.
     - Unknown query parameters are ignored, not rejected.
+    - Multi-valued query parameters accept a repeated key, a comma-separated
+      value, or both.
     - Timestamps are RFC 3339 UTC.
 
 servers:
@@ -62,6 +64,10 @@ tags:
     description: Persisted in `cart_items`, scoped to the current user.
   - name: Orders
     description: Mock checkout. Writes `orders` and `order_items`.
+  - name: Admin
+    description: |
+      Operations endpoints, gated on `is_admin`. Read paths back the ops
+      dashboard; write paths mutate catalog and order state.
   - name: Media
     description: Image proxy to MinIO.
   - name: Health
@@ -124,10 +130,25 @@ paths:
         - name: category
           in: query
           description: |
-            Top-level category slug. Narrows to one group; the grouped shape
-            is unchanged so a View never branches.
+            Categories to keep. Accepts a repeated parameter
+            (`?category=a&category=b`), a comma-separated value
+            (`?category=a,b`), or the plural spelling `categories` — callers
+            reach for all three. Omit for every category.
+
+            **Values need not be slugs.** An exact slug wins outright;
+            otherwise the word is matched against slug and display name with
+            case and separators folded, so `copy paper`, `コピー用紙` and
+            `copy_paper_toner` all resolve to the same category. A caller can
+            therefore pass a user's own words without knowing the catalog —
+            which is what removes the "fetch categories first" round trip.
+
+            What resolved comes back as `selected_categories`, what did not as
+            `unmatched_categories`. Narrows which groups are returned; the
+            grouped shape is unchanged, so a View never branches.
           schema: { type: string }
-          example: store_supplies
+          style: form
+          explode: true
+          example: files,drinks_food
         - name: min_price
           in: query
           description: |
@@ -332,6 +353,405 @@ paths:
               schema: { $ref: "#/components/schemas/Order" }
         "404": { $ref: "#/components/responses/NotFound" }
 
+  /api/v1/config:
+    get:
+      tags: [Catalog]
+      summary: Public runtime configuration
+      operationId: getConfig
+      description: |
+        What the frontend needs to know before routing. `shop_enabled` is
+        server-side so the storefront can be switched off with an env var and
+        an API restart, without rebuilding the SPA.
+      responses:
+        "200":
+          description: Configuration.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [shop_enabled]
+                properties:
+                  shop_enabled: { type: boolean, example: true }
+
+  /api/v1/admin/stats:
+    get:
+      tags: [Admin]
+      summary: Dashboard totals and chart series
+      operationId: adminStats
+      description: |
+        Everything the ops dashboard renders. `orders_by_day` is gap-filled by
+        `generate_series`, so a day with no orders appears as zero rather than
+        being skipped — a line chart would otherwise misrepresent the trend.
+        Cancelled orders are counted but excluded from revenue.
+      parameters:
+        - name: days
+          in: query
+          description: Length of the daily series.
+          schema: { type: integer, minimum: 1, maximum: 365, default: 30 }
+        - $ref: "#/components/parameters/UserHeader"
+      responses:
+        "200":
+          description: Stats.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Stats" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/admin/orders:
+    get:
+      tags: [Admin]
+      summary: List every user's orders
+      operationId: adminOrders
+      description: |
+        Newest first, each with its line items and the customer who placed it.
+
+        Every filter is optional and they combine with AND, so one request
+        answers "pending or cancelled orders over ¥50,000 from the last week".
+      parameters:
+        - name: q
+          in: query
+          description: |
+            Free text matched case-insensitively against the order number, the
+            customer's name and their email — the three things someone has in
+            hand when hunting for one order.
+          schema: { type: string }
+          example: carol
+        - name: status
+          in: query
+          description: |
+            Statuses to include, any combination. Accepts a repeated parameter
+            (`?status=a&status=b`), a comma-separated value (`?status=a,b`), or
+            the plural spelling `statuses` — the same forms the catalog's
+            `category` takes. Omit for all three. An unknown status is a `400`
+            rather than an empty list, because it is always a caller bug.
+          schema: { type: string }
+          example: pending,cancelled
+        - name: min_total
+          in: query
+          description: Minimum order total in yen, inclusive.
+          schema: { type: integer, minimum: 0 }
+          example: 50000
+        - name: max_total
+          in: query
+          description: Maximum order total in yen, inclusive.
+          schema: { type: integer, minimum: 0 }
+        - name: min_quantity
+          in: query
+          description: |
+            Minimum **units** ordered — the sum of item quantities, not the
+            number of distinct lines. "Bulk orders of 20+" means twenty things,
+            which an order of two lines can easily be.
+          schema: { type: integer, minimum: 0 }
+          example: 20
+        - name: max_quantity
+          in: query
+          description: Maximum units ordered across the whole order.
+          schema: { type: integer, minimum: 0 }
+        - name: from
+          in: query
+          description: Earliest order date, inclusive.
+          schema: { type: string, format: date }
+          example: "2026-08-01"
+        - name: to
+          in: query
+          description: |
+            Latest order date, **inclusive** — internally the boundary becomes
+            the start of the next day, so `to=2026-09-06` includes everything
+            placed that day. A range that excludes its own end date is a bug
+            report waiting to happen.
+          schema: { type: string, format: date }
+          example: "2026-08-31"
+        - name: days
+          in: query
+          description: |
+            Shorthand for "the last N days", which is how a person asks.
+            Ignored when `from` is given, so the two can never disagree.
+          schema: { type: integer, minimum: 1, maximum: 3650 }
+          example: 7
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - $ref: "#/components/parameters/UserHeader"
+      responses:
+        "200":
+          description: Orders.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [orders, total, limit, offset, applied]
+                properties:
+                  orders:
+                    type: array
+                    items: { $ref: "#/components/schemas/AdminOrder" }
+                  total: { type: integer, description: Count before pagination. }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                  applied: { $ref: "#/components/schemas/AppliedOrderFilter" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/admin/orders/{order_number}:
+    patch:
+      tags: [Admin]
+      summary: Change an order's status
+      operationId: adminUpdateOrder
+      description: |
+        Moving an order to `cancelled` removes it from revenue totals but keeps
+        it counted in `orders`.
+      parameters:
+        - name: order_number
+          in: path
+          required: true
+          schema: { type: string }
+          example: RKS-20260904-0001
+        - $ref: "#/components/parameters/UserHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [status]
+              properties:
+                status: { type: string, enum: [pending, confirmed, cancelled] }
+      responses:
+        "200":
+          description: The new status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  order_number: { type: string }
+                  status: { type: string }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
+  /api/v1/admin/users:
+    get:
+      tags: [Admin]
+      summary: List accounts with their activity
+      operationId: adminUsers
+      description: |
+        Accounts with their open cart lines, order count and lifetime spend.
+
+        Every filter is optional and they combine with AND, mirroring
+        `GET /api/v1/admin/orders`. The numeric bounds read the same derived
+        figures the rows display — filtering on a number the table does not
+        show would be untraceable.
+      parameters:
+        - name: q
+          in: query
+          description: Free text matched case-insensitively against name and email.
+          schema: { type: string }
+          example: carol
+        - name: role
+          in: query
+          description: Restrict to admins or to customers. Omit for both.
+          schema: { type: string, enum: [admin, customer] }
+        - name: has_cart
+          in: query
+          description: |
+            `true` keeps only accounts with something left in the basket —
+            the abandoned-cart question.
+          schema: { type: boolean }
+        - name: min_orders
+          in: query
+          description: Minimum orders placed, inclusive.
+          schema: { type: integer, minimum: 0 }
+          example: 3
+        - name: max_orders
+          in: query
+          description: |
+            Maximum orders placed, inclusive. **`0` is a real filter** here —
+            "customers who never ordered" — so omit the parameter for "no
+            maximum" rather than sending zero.
+          schema: { type: integer, minimum: 0 }
+        - name: min_spent
+          in: query
+          description: Minimum lifetime spend in yen. Cancelled orders excluded.
+          schema: { type: integer, minimum: 0 }
+          example: 100000
+        - name: max_spent
+          in: query
+          description: Maximum lifetime spend in yen. Cancelled orders excluded.
+          schema: { type: integer, minimum: 0 }
+        - name: from
+          in: query
+          description: Earliest signup date, inclusive.
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          description: Latest signup date, inclusive (same end-of-day rule as orders).
+          schema: { type: string, format: date }
+        - name: limit
+          in: query
+          schema: { type: integer, minimum: 1, maximum: 500, default: 50 }
+        - name: offset
+          in: query
+          schema: { type: integer, minimum: 0, default: 0 }
+        - $ref: "#/components/parameters/UserHeader"
+      responses:
+        "200":
+          description: Users.
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [users, total, limit, offset, applied]
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: "#/components/schemas/AdminUser" }
+                  total: { type: integer, description: Count before pagination. }
+                  limit: { type: integer }
+                  offset: { type: integer }
+                  applied: { $ref: "#/components/schemas/AppliedUserFilter" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/admin/products:
+    get:
+      tags: [Admin]
+      summary: List products including deactivated ones
+      operationId: adminProducts
+      description: |
+        Same category-first shape as `GET /api/v1/products` — one group per
+        category, each holding its products — so a consumer renders sections
+        without regrouping.
+
+        Two differences: it includes products with `is_active = false` (which
+        the shop hides), and every product carries its `description`.
+      parameters:
+        - name: q
+          in: query
+          schema: { type: string }
+        - name: category
+          in: query
+          description: |
+            One or more categories, same forms and same loose resolution as the
+            shop endpoint: repeated, comma-separated, or the plural spelling
+            `categories`, and slugs, English words or Japanese names all match.
+          schema: { type: string }
+          style: form
+          explode: true
+          example: files,drinks_food
+        - name: include_inactive
+          in: query
+          description: Send `false` to hide deactivated products.
+          schema: { type: boolean, default: true }
+        - $ref: "#/components/parameters/UserHeader"
+      responses:
+        "200":
+          description: Products, grouped by category.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ProductList" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+
+  /api/v1/admin/products/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: integer, format: int64 }
+      - $ref: "#/components/parameters/UserHeader"
+    patch:
+      tags: [Admin]
+      summary: Update a product
+      operationId: adminUpdateProduct
+      description: |
+        Partial update — omitted fields are left untouched. Edits are
+        **overwritten by the next crawl**, which upserts on
+        `source_product_id`; `is_active` survives because the crawler never
+        sets it.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                name: { type: string }
+                description: { type: string }
+                base_price_jpy: { type: integer, minimum: 0 }
+                is_active: { type: boolean }
+      responses:
+        "200":
+          description: |
+            The updated product, or `{id, updated}` when it was deactivated and
+            is therefore no longer readable.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Product" }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+    delete:
+      tags: [Admin]
+      summary: Delete a product
+      operationId: adminDeleteProduct
+      description: |
+        Hard delete. `order_items` references products with `ON DELETE
+        RESTRICT`, so a product that has ever been ordered cannot be removed —
+        deactivate it instead.
+      responses:
+        "204":
+          description: Deleted. Sizes and images cascade.
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+        "409":
+          description: The product appears in an order.
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Error" }
+
+  /api/v1/admin/sizes/{id}:
+    patch:
+      tags: [Admin]
+      summary: Update a size
+      operationId: adminUpdateSize
+      description: |
+        `price_adjustment_jpy` is a delta from the product's `base_price_jpy`
+        and may be negative. Sizes render in ascending order of this value, so
+        changing it reorders S/M/L.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer, format: int64 }
+        - $ref: "#/components/parameters/UserHeader"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              minProperties: 1
+              properties:
+                size_name: { type: string }
+                price_adjustment_jpy: { type: integer }
+      responses:
+        "200":
+          description: Updated.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: integer, format: int64 }
+                  updated: { type: boolean }
+        "400": { $ref: "#/components/responses/BadRequest" }
+        "403": { $ref: "#/components/responses/Forbidden" }
+        "404": { $ref: "#/components/responses/NotFound" }
+
   /media/{key}:
     get:
       tags: [Media]
@@ -411,6 +831,18 @@ components:
           schema: { $ref: "#/components/schemas/Error" }
           example:
             error: { code: product_not_found, message: "Product 999 does not exist." }
+    Forbidden:
+      description: |
+        The caller is not an administrator. Identity comes from
+        `X-Stockroom-User`; a request without it resolves to the default user,
+        who is deliberately not an admin.
+      content:
+        application/json:
+          schema: { $ref: "#/components/schemas/Error" }
+          example:
+            error:
+              code: forbidden
+              message: This endpoint requires an administrator account.
     CartResponse:
       description: The full cart after the operation.
       content:
@@ -435,6 +867,7 @@ components:
                 - cart_empty
                 - cart_item_not_found
                 - order_not_found
+                - forbidden
                 - internal
             message:
               type: string
@@ -459,11 +892,17 @@ components:
 
     User:
       type: object
-      required: [user_id, email, name, created]
+      required: [user_id, email, name, is_admin, created]
       properties:
         user_id: { type: integer, format: int64, example: 1 }
         email: { type: string, format: email, example: alice@stockroom.local }
         name: { type: string, example: Alice }
+        is_admin:
+          type: boolean
+          description: |
+            Granted at API startup from `STOCKROOM_ADMIN_EMAILS`, never over
+            HTTP. Gates `/api/v1/admin/*`.
+          example: false
         created:
           type: boolean
           description: True when this call inserted the row.
@@ -476,6 +915,14 @@ components:
         id: { type: integer, format: int64, example: 3 }
         slug: { type: string, example: store_supplies }
         name: { type: string, example: 店舗用品 }
+        product_count:
+          type: integer
+          description: |
+            Active products in this category. Returned by
+            `GET /api/v1/categories` only — omitted where a category is nested
+            inside a product, where it would be noise. Lets a caller build
+            category filters without fetching the catalog.
+          example: 9
 
     Size:
       type: object
@@ -555,7 +1002,7 @@ components:
 
     ProductList:
       type: object
-      required: [groups, count]
+      required: [groups, count, selected_categories]
       properties:
         groups:
           type: array
@@ -567,6 +1014,27 @@ components:
           type: integer
           description: Total products across all groups.
           example: 12
+        selected_categories:
+          type: array
+          description: |
+            The slugs the requested words resolved to. Empty means no filter
+            was applied, so every category is present.
+
+            A caller renders its filter controls from this plus `groups` — it
+            never needs to fetch the category list first. That is the point:
+            asking for two categories costs one request, not two.
+          items: { type: string }
+          example: [files, drinks_food]
+        unmatched_categories:
+          type: array
+          description: |
+            Requested words that matched no category. Present only when
+            non-empty, so "nothing matched" is distinguishable from "this
+            category is empty". When *every* word is unmatched the response is
+            empty rather than the whole catalog — returning everything reads as
+            a broken filter.
+          items: { type: string }
+          example: [nope]
       example:
         groups:
           - category: { id: 3, slug: store_supplies, name: 店舗用品 }
@@ -606,6 +1074,7 @@ components:
                   - { id: 90, size_name: L, price_adjustment_jpy: 240, unit_price_jpy: 450 }
                 images: [/media/products/771/c4d5e6f70819.jpg]
         count: 3
+        selected_categories: [store_supplies, daily_life_goods]
 
     QuoteRequest:
       type: object
@@ -712,6 +1181,152 @@ components:
           type: array
           items: { $ref: "#/components/schemas/OrderItem" }
         created_at: { type: string, format: date-time }
+
+    Stats:
+      type: object
+      required: [totals, products_by_category, orders_by_day, top_products, price_buckets]
+      properties:
+        totals:
+          type: object
+          properties:
+            products: { type: integer, example: 57 }
+            active_products: { type: integer, example: 57 }
+            categories: { type: integer, example: 8 }
+            sizes: { type: integer, example: 171 }
+            images: { type: integer, example: 167 }
+            users: { type: integer, example: 9 }
+            orders: { type: integer, example: 5 }
+            revenue_jpy:
+              type: integer
+              description: Excludes cancelled orders.
+              example: 210384
+            open_cart_lines: { type: integer, example: 3 }
+            cancelled_orders: { type: integer, example: 0 }
+        products_by_category:
+          type: array
+          items:
+            type: object
+            properties:
+              slug: { type: string }
+              name: { type: string }
+              count: { type: integer }
+        orders_by_day:
+          type: array
+          description: One entry per day, gaps filled with zeros.
+          items:
+            type: object
+            properties:
+              date: { type: string, example: "2026-09-04" }
+              orders: { type: integer }
+              revenue_jpy: { type: integer }
+        top_products:
+          type: array
+          items:
+            type: object
+            properties:
+              product_id: { type: [integer, "null"], format: int64 }
+              product_name: { type: string }
+              quantity: { type: integer }
+              revenue_jpy: { type: integer }
+        price_buckets:
+          type: array
+          description: Unit prices bucketed for a distribution chart.
+          items:
+            type: object
+            properties:
+              label: { type: string, example: "1,000-2,999" }
+              count: { type: integer }
+
+    AdminOrder:
+      allOf:
+        - $ref: "#/components/schemas/Order"
+        - type: object
+          required: [user_id, user_name, user_email, item_count, total_quantity]
+          properties:
+            user_id: { type: integer, format: int64 }
+            user_name: { type: string, example: Alice }
+            user_email: { type: string, format: email }
+            item_count:
+              type: integer
+              description: Distinct lines on the order.
+              example: 3
+            total_quantity:
+              type: integer
+              description: |
+                Units ordered — the sum of item quantities, and what
+                `min_quantity`/`max_quantity` filter on. Both numbers are
+                derivable from `items`, but a filter is only trustworthy if the
+                number it filtered on is visible beside the row.
+              example: 24
+
+    AppliedUserFilter:
+      type: object
+      description: |
+        The user filter as the server understood it. Absent keys mean "not
+        filtered". Same contract as `AppliedOrderFilter`: the View renders the
+        filters in force rather than the ones it believes it sent, which is
+        what lets a panel arrive pre-filled from a prompt.
+      properties:
+        q: { type: string }
+        role: { type: string, enum: [admin, customer] }
+        has_cart: { type: boolean }
+        min_orders: { type: integer }
+        max_orders: { type: integer }
+        min_spent: { type: integer }
+        max_spent: { type: integer }
+        from: { type: string, format: date }
+        to: { type: string, format: date }
+      example:
+        role: customer
+        min_orders: 3
+
+    AppliedOrderFilter:
+      type: object
+      description: |
+        The filter as the server understood it. Absent keys mean "not
+        filtered", so a consumer renders the filters actually in force rather
+        than the ones it believes it sent — a click inside a View and a call
+        from the model both land here.
+      required: [statuses]
+      properties:
+        q: { type: string }
+        statuses:
+          type: array
+          description: Empty means all three.
+          items: { type: string, enum: [pending, confirmed, cancelled] }
+        min_total: { type: integer }
+        max_total: { type: integer }
+        min_quantity: { type: integer }
+        max_quantity: { type: integer }
+        from:
+          type: string
+          format: date
+          description: Also set by `days`, resolved to a concrete date.
+        to:
+          type: string
+          format: date
+          description: The inclusive day the caller asked for, not the exclusive SQL boundary.
+      example:
+        statuses: [pending]
+        min_total: 50000
+        from: "2026-08-30"
+
+    AdminUser:
+      type: object
+      required: [id, name, email, created_at, is_admin, cart_lines, orders, spent_jpy]
+      properties:
+        id: { type: integer, format: int64 }
+        name: { type: string, example: Alice }
+        email: { type: string, format: email }
+        created_at: { type: string, format: date-time }
+        is_admin: { type: boolean }
+        cart_lines:
+          type: integer
+          description: Lines currently in this user's cart.
+        orders: { type: integer }
+        spent_jpy:
+          type: integer
+          description: Lifetime total, excluding cancelled orders.
 
     Health:
       type: object

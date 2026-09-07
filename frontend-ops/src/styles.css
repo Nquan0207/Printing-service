@@ -1,0 +1,14 @@
+/* Mantine covers the components; this is only what it does not. */
+html, body, #root { height: 100%; }
+
+/* Product photos are studio shots on white; multiply drops the box so the
+   card background shows through consistently in light and dark. */
+.thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  mix-blend-mode: multiply;
+}
+[data-mantine-color-scheme="dark"] .thumb img {
+  mix-blend-mode: normal;
+}
