@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Group, Paper, SimpleGrid, Table, Text } from "@mantine/core";
 import { AreaChart, BarChart, ChartCard, Empty, RowChart } from "../components/Charts";
-import { AdminGate, isAuthRequired } from "../components/AdminGate";
+import { AUTH_REQUIRED, AdminGate, AdminSession, isAuthRequired } from "../components/AdminGate";
 import { ErrorPanel, Shell } from "../components/Shell";
 import { createApp, readResult } from "../lib/mcp";
 import { shortDate, yen } from "../lib/format";
@@ -18,6 +18,7 @@ type Stats = {
   orders_by_day?: { date: string; orders: number; revenue_jpy: number }[];
   top_products?: { product_id: number; product_name: string; quantity: number; revenue_jpy: number }[];
   price_buckets?: { label: string; count: number }[];
+  admin?: { email: string; name?: string } | null;
   error?: { code: string; message: string };
 };
 
@@ -92,6 +93,7 @@ export default function Dashboard() {
   return (
     <Shell
       title="Stockroom operations"
+      right={<AdminSession app={app} admin={stats.admin} onSignedOut={() => setStats(AUTH_REQUIRED)} />}
       sub={loading ? "Loading…" : `${t.products} products · ${t.categories} categories · last ${days} days`}
       bar={bar}
     >

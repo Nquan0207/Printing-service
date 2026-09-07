@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Group, Table, Text, TextInput } from "@mantine/core";
-import { AdminGate, isAuthRequired } from "../components/AdminGate";
+import { AUTH_REQUIRED, AdminGate, AdminSession, isAuthRequired } from "../components/AdminGate";
 import { ErrorPanel, Shell, StatusPill } from "../components/Shell";
 import { createApp, readResult } from "../lib/mcp";
 import { asDate, yen } from "../lib/format";
@@ -22,7 +22,7 @@ type Applied = {
   min_quantity?: number; max_quantity?: number;
   from?: string; to?: string;
 };
-type Payload = { orders?: Order[]; total?: number; applied?: Applied };
+type Payload = { orders?: Order[]; total?: number; applied?: Applied; admin?: { email: string; name?: string } | null; };
 
 const STATUSES = ["pending", "confirmed", "cancelled"] as const;
 /** Field id -> the tool argument it fills. */
@@ -152,6 +152,7 @@ export default function Orders() {
   return (
     <Shell
       title="Orders"
+      right={<AdminSession app={app} admin={data.admin} onSignedOut={() => setData(AUTH_REQUIRED)} />}
       sub={loading ? "Loading…" : `${orders.length} of ${data.total ?? orders.length} orders · ${units} units · ${yen(value)}`}
       bar={bar}
     >

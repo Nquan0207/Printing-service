@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Group, Table, Text, TextInput } from "@mantine/core";
-import { AdminGate, isAuthRequired } from "../components/AdminGate";
+import { AUTH_REQUIRED, AdminGate, AdminSession, isAuthRequired } from "../components/AdminGate";
 import { ErrorPanel, Shell } from "../components/Shell";
 import { createApp, readResult } from "../lib/mcp";
 import { asDate, yen } from "../lib/format";
@@ -18,7 +18,7 @@ type Applied = {
   min_spent?: number; max_spent?: number;
   from?: string; to?: string;
 };
-type Payload = { users?: User[]; total?: number; applied?: Applied };
+type Payload = { users?: User[]; total?: number; applied?: Applied; admin?: { email: string; name?: string } | null };
 
 const FIELDS = {
   q: "q",
@@ -159,6 +159,7 @@ export default function Users() {
   return (
     <Shell
       title="Users"
+      right={<AdminSession app={app} admin={data.admin} onSignedOut={() => setData(AUTH_REQUIRED)} />}
       sub={loading ? "Loading…" : `${users.length} of ${data.total ?? users.length} accounts · ${orders} orders · ${yen(spent)}`}
       bar={bar}
     >

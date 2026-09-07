@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Alert, Button, Group, Paper, PasswordInput, Stack, Text, TextInput, Title } from "@mantine/core";
+import { Alert, Anchor, Button, Group, Paper, PasswordInput, Stack, Text, TextInput, Title } from "@mantine/core";
 import type { App } from "@modelcontextprotocol/ext-apps";
 import { readResult } from "../lib/mcp";
 
@@ -82,5 +82,52 @@ export function AdminGate({ app, onSignedIn }: { app: App; onSignedIn: () => voi
         </Group>
       </Stack>
     </Paper>
+  );
+}
+
+
+/** The payload a View falls back to after signing out, so the gate re-renders. */
+export const AUTH_REQUIRED = {
+  error: {
+    code: "auth_required",
+    message: "Sign in with an administrator email and passcode to view this.",
+  },
+} as const;
+
+/**
+ * Who is signed in, and the way out.
+ *
+ * The grant belongs to the connection rather than to one panel, so signing out
+ * here ends it for every ops View in the conversation -- which is the point:
+ * leaving an admin session open because no panel offered a way to close it is
+ * how a shared screen leaks an order book.
+ */
+export function AdminSession({
+  app, admin, onSignedOut,
+}: {
+  app: App;
+  admin?: { email: string; name?: string } | null;
+  onSignedOut: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  if (!admin) return null;
+
+  const signOut = async () => {
+    setBusy(true);
+    try {
+      await app.callServerTool({ name: "admin_sign_out", arguments: {} });
+      onSignedOut();
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  return (
+    <Group gap={6} wrap="nowrap">
+      <Text size="xs" c="dimmed">{admin.email}</Text>
+      <Anchor component="button" type="button" size="xs" disabled={busy} onClick={signOut}>
+        Sign out
+      </Anchor>
+    </Group>
   );
 }

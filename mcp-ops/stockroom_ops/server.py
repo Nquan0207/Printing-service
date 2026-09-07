@@ -18,6 +18,7 @@ from mcp.types import ToolAnnotations
 from pydantic import BeforeValidator, Field
 
 from stockroom_ops import adminauth
+from stockroom_ops.adminauth import public
 from stockroom_ops.api import ApiError, StockroomApi
 from stockroom_ops.catalog import normalize_tokens
 from stockroom_ops.config import VIEWS_DIR, Settings
@@ -124,6 +125,18 @@ async def _find_product(api: StockroomApi, admin_id: int, text: str) -> dict[str
     return best
 
 
+def with_admin(payload: dict[str, Any], owner_key: str) -> dict[str, Any]:
+    """Attach the signed-in admin to a tool result.
+
+    The panel renders its sign-out control from this, and a freshly re-rendered
+    panel uses it to tell that the connection is still authenticated instead of
+    showing the sign-in form over the top of real data.
+    """
+    if isinstance(payload, dict) and "error" not in payload:
+        payload = {**payload, "admin": public(owner_key)}
+    return payload
+
+
 def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
     apps = Apps()
     api = StockroomApi(settings.api_base, settings.admin_email)
@@ -190,12 +203,13 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
     )
     async def get_dashboard(ctx: Context, days: int = 30) -> dict[str, Any]:
         """Return dashboard figures for the last `days` days (1-365)."""
-        admin_id = adminauth.user_id(adminauth.owner(ctx))
+        owner_key = adminauth.owner(ctx)
+        admin_id = adminauth.user_id(owner_key)
         if admin_id is None:
             return adminauth.AUTH_REQUIRED
         days = max(1, min(int(days), 365))
         try:
-            return await api.stats(admin_id, days)
+            return with_admin(await api.stats(admin_id, days), owner_key)
         except ApiError as exc:
             # Surface a usable message rather than an empty iframe.
             return {"error": {"code": exc.code, "message": str(exc)}}
@@ -283,7 +297,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         limit: Annotated[int, Field(default=50, description="Rows to return.")] = 50,
     ) -> dict[str, Any]:
         """List orders, filtered by status, date, total and units ordered."""
-        admin_id = adminauth.user_id(adminauth.owner(ctx))
+        owner_key = adminauth.owner(ctx)
+        admin_id = adminauth.user_id(owner_key)
         if admin_id is None:
             return adminauth.AUTH_REQUIRED
         bad = [s for s in normalize_tokens(status) if s not in STATUSES]
@@ -308,7 +323,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
                 "min_quantity": int(min_quantity),
                 "max_quantity": int(max_quantity),
             }
-            return await api.orders(
+            return with_admin(await api.orders(
                 admin_id,
                 limit=max(1, min(int(limit), 200)),
                 q=str(q).strip(),
@@ -316,7 +331,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
                 days=max(0, int(days)) or None,
                 **{"from": date_from, "to": date_to},
                 **{k: v for k, v in bounds.items() if v > 0},
-            )
+            ), owner_key)
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
 
@@ -365,16 +380,17 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         ] = True,
     ) -> dict[str, Any]:
         """List products grouped by category, optionally limited to some categories."""
-        admin_id = adminauth.user_id(adminauth.owner(ctx))
+        owner_key = adminauth.owner(ctx)
+        admin_id = adminauth.user_id(owner_key)
         if admin_id is None:
             return adminauth.AUTH_REQUIRED
         # One request. The API resolves the words to slugs, filters in SQL and
         # returns category-first groups, so there is nothing to fetch first and
         # nothing to regroup after.
         try:
-            data = await api.products(
+            data = with_admin(await api.products(
                 admin_id, q, normalize_tokens(categories), include_inactive
-            )
+            ), owner_key)
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
         return absolute_images(data, settings.public_api_base)
@@ -411,7 +427,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         ],
     ) -> dict[str, Any]:
         """Return one product, found by catalog id or by name."""
-        admin_id = adminauth.user_id(adminauth.owner(ctx))
+        owner_key = adminauth.owner(ctx)
+        admin_id = adminauth.user_id(owner_key)
         if admin_id is None:
             return adminauth.AUTH_REQUIRED
         text = str(product).strip()
@@ -424,7 +441,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
             return {"error": {"code": exc.code, "message": str(exc)}}
         if "error" in data:
             return data
-        return absolute_images(data, settings.public_api_base)
+        return with_admin(absolute_images(data, settings.public_api_base), owner_key)
 
     @apps.tool(
         resource_uri=USERS_URI,
@@ -494,7 +511,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         limit: Annotated[int, Field(default=50, description="Rows to return.")] = 50,
     ) -> dict[str, Any]:
         """List user accounts, filtered by name, role, activity and spend."""
-        admin_id = adminauth.user_id(adminauth.owner(ctx))
+        owner_key = adminauth.owner(ctx)
+        admin_id = adminauth.user_id(owner_key)
         if admin_id is None:
             return adminauth.AUTH_REQUIRED
         wanted = str(role).strip().lower()
@@ -511,7 +529,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
                 "min_spent": int(min_spent),
                 "max_spent": int(max_spent),
             }
-            return await api.users(
+            return with_admin(await api.users(
                 admin_id,
                 limit=max(1, min(int(limit), 200)),
                 q=str(q).strip(),
@@ -522,7 +540,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
                 **({"max_orders": int(max_orders)} if int(max_orders) >= 0 else {}),
                 **{k: v for k, v in bounds.items() if v > 0},
                 **{"from": date_from, "to": date_to},
-            )
+            ), owner_key)
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
 

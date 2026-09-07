@@ -59,6 +59,17 @@ def user_id(owner_key: str) -> int | None:
     return session["user_id"] if session else None
 
 
+def public(owner_key: str) -> dict[str, Any] | None:
+    """Who is signed in, for the panel to show beside its sign-out control.
+
+    Only the name and address -- the user_id is this server's business.
+    """
+    session = admin(owner_key)
+    if not session:
+        return None
+    return {"email": session["email"], "name": session.get("name", "")}
+
+
 def sign_in(owner_key: str, user: dict[str, Any]) -> dict[str, Any]:
     """Bind a verified admin to this connection."""
     grant = {"user_id": int(user["user_id"]), "email": user["email"], "name": user.get("name", "")}

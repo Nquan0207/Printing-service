@@ -1,4 +1,4 @@
-import { Alert, Badge, Box, Stack, Text, Title } from "@mantine/core";
+import { Alert, Badge, Box, Group, Stack, Text, Title } from "@mantine/core";
 
 /** A blank iframe reads as a host bug, so failures always render. */
 export function ErrorPanel({ error }: { error: { code: string; message: string } }) {
@@ -11,16 +11,21 @@ export function ErrorPanel({ error }: { error: { code: string; message: string }
 
 /** Every View is a title, a one-line summary, an optional control bar, then content. */
 export function Shell({
-  title, sub, bar, children,
+  title, sub, bar, right, children,
 }: {
   title: string;
   sub: string;
   bar?: React.ReactNode;
+  /** Top-right slot -- the signed-in admin and their way out. */
+  right?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
     <Box p="md">
-      <Title order={1}>{title}</Title>
+      <Group justify="space-between" align="flex-start" wrap="nowrap">
+        <Title order={1}>{title}</Title>
+        {right}
+      </Group>
       <Text size="xs" c="dimmed" mb="sm">{sub}</Text>
       {bar && <Box mb="sm">{bar}</Box>}
       <Stack gap="sm">{children}</Stack>

@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Group, Image, Table, Text } from "@mantine/core";
-import { AdminGate, isAuthRequired } from "../components/AdminGate";
+import { AUTH_REQUIRED, AdminGate, AdminSession, isAuthRequired } from "../components/AdminGate";
 import { ErrorPanel, Shell } from "../components/Shell";
 import { createApp, readResult } from "../lib/mcp";
 import { yen } from "../lib/format";
@@ -13,6 +13,7 @@ type Product = {
    *  silently resolved: picking one row out of eight is how you show the
    *  wrong product. */
   other_matches?: { id: number; name: string }[];
+  admin?: { email: string; name?: string } | null;
 };
 
 const app = createApp("Product");
@@ -41,6 +42,7 @@ export default function Product() {
   return (
     <Shell
       title="Product"
+      right={<AdminSession app={app} admin={p.admin} onSignedOut={() => setP(AUTH_REQUIRED)} />}
       sub={`#${p.id} · ${p.category?.name ?? ""}${p.brand ? ` · ${p.brand}` : ""}`}
     >
       {/* Images are absolute URLs at the Go service; the View's CSP names that
