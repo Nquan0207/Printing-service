@@ -12,8 +12,8 @@ x-crawler: &crawler
     dockerfile: crawler/Dockerfile
   environment: &crawler-env
     <<: *storage-env
-    CRAWL_MAX_PRODUCTS: "${CRAWL_MAX_PRODUCTS:-70}"
-    CRAWL_MAX_CATEGORIES: "${CRAWL_MAX_CATEGORIES:-8}"
+    CRAWL_MAX_PRODUCTS: "${CRAWL_MAX_PRODUCTS:-150}"
+    CRAWL_MAX_CATEGORIES: "${CRAWL_MAX_CATEGORIES:-10}"
     CRAWL_CATEGORIES: "${CRAWL_CATEGORIES:-}"
     CRAWL_SIZES_PER_PRODUCT: "${CRAWL_SIZES_PER_PRODUCT:-3}"
     CRAWL_MAX_IMAGES: "${CRAWL_MAX_IMAGES:-3}"
@@ -154,6 +154,16 @@ services:
       interval: 15s
       timeout: 10s
       retries: 10
+    restart: unless-stopped
+
+  # React SPA for the Ollama chat, served by nginx which reverse-proxies /api,
+  # /media and /healthz to `chat` so the browser sees one origin -- the session
+  # cookie is host-only and tool results carry relative /media paths.
+  chat-ui:
+    build: ./chat-ui
+    depends_on:
+      chat: {condition: service_healthy}
+    ports: ["127.0.0.1:${CHAT_UI_HOST_PORT:-3004}:8080"]
     restart: unless-stopped
 
   crawler:

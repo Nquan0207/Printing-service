@@ -19,6 +19,10 @@ def test_running_chat_can_sign_in_and_use_an_mcp_tool():
             json={"name": "Ollama E2E", "email": "ollama-e2e@stockroom.local"},
         )
         assert login.status_code == 200, login.text
+        # Start from an empty thread. Chat history is persisted per demo user
+        # now, so a second run would otherwise resume the first run's answer
+        # and the model would reply from context without calling the tool.
+        assert client.delete("/api/chat/messages").status_code == 200
         response = client.post(
             "/api/chat",
             json={"message": "Use list_categories and briefly tell me how many categories are available."},

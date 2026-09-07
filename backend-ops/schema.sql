@@ -162,6 +162,37 @@ CREATE TABLE order_items (
 
 
 -- =========================================================
+-- 9. CHAT MESSAGES (Ollama chat transcript)
+-- =========================================================
+--
+-- One rolling thread per user, which is what the local chat app resumes on
+-- sign-in. `payload` keeps the structured MCP tool result so the browser can
+-- re-render product/cart/receipt cards after a reload; `content` is the prose
+-- the user actually saw. Dropped with the user, like cart_items -- a
+-- transcript outliving its account has nothing to attach to.
+
+CREATE TABLE chat_messages (
+    id BIGSERIAL PRIMARY KEY,
+    user_id BIGINT NOT NULL
+        REFERENCES users(id)
+        ON DELETE CASCADE,
+    role VARCHAR(20) NOT NULL
+        CHECK (
+            role IN (
+                'user',
+                'assistant',
+                'tool'
+            )
+        ),
+    content TEXT NOT NULL,
+    -- Set only for role = 'tool'.
+    tool_name VARCHAR(100),
+    payload JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
+
+
+-- =========================================================
 -- PERFORMANCE INDEXES
 -- =========================================================
 
@@ -171,3 +202,5 @@ CREATE INDEX idx_product_sizes_product_id ON product_sizes(product_id);
 CREATE INDEX idx_cart_items_user_id ON cart_items(user_id);
 CREATE INDEX idx_orders_user_id ON orders(user_id);
 CREATE INDEX idx_order_items_order_id ON order_items(order_id);
+-- Transcripts are always read newest-last for one user, never across users.
+CREATE INDEX idx_chat_messages_user_id ON chat_messages(user_id, id);

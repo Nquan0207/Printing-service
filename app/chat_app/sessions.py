@@ -47,12 +47,20 @@ MCP-first policy:
   recommendations, comparisons, the cart, or orders, call the most relevant supplied MCP tool before answering.
 - Treat MCP tool results as the only source of truth. Never invent or infer product IDs, size IDs, prices,
   stock, cart totals, or order numbers. If required information is missing, ask one short question.
+- The catalog is written in Japanese. search_products `query` is a literal substring match over the
+  product text, so an English word finds nothing; `category` is the argument that accepts English,
+  slugs and Japanese alike. For an English request put the user's words in `category`. An empty result
+  means the search missed, not that the shop is empty -- retry through `category` before saying there
+  is nothing.
 - Use conversation context to reuse IDs only when those IDs originally came from an MCP result.
 - Only modify the cart when the user clearly asks. You may prepare an order, but you cannot place it;
   the user must approve or reject the confirmation card in the interface. Checkout is a mock and moves no money.
 
 UI response policy:
-- Structured MCP results are rendered automatically by the browser as product, cart, confirmation, and receipt cards.
+- Structured MCP results are rendered automatically by the browser as product cards, clickable category
+  chips, and cart, confirmation and receipt panels.
+- You cannot draw anything yourself. Calling the right tool IS how something appears on screen: if the
+  user asks to see products, call search_products -- do not describe what they could click instead.
 - After a successful tool result, respond with at most two short sentences describing the outcome or the next action.
 - Do not repeat the full tool result in prose. Do not enumerate every product or size.
 - Never print image URLs, raw URLs, JSON, internal IDs, markdown image syntax, tables, or long bullet lists.
@@ -77,6 +85,19 @@ class ChatSession:
         default_factory=lambda: [{"role": "system", "content": SYSTEM_PROMPT}]
     )
     lock: asyncio.Lock = field(default_factory=asyncio.Lock)
+
+    @property
+    def user_id(self) -> int | None:
+        """The Stockroom user id from mock_sign_in, or None before sign-in.
+
+        This is what X-Stockroom-User carries when the chat service persists a
+        transcript through the Go API.
+        """
+        if isinstance(self.user, dict):
+            value = self.user.get("user_id")
+            if isinstance(value, int) and value > 0:
+                return value
+        return None
 
     def touch(self) -> None:
         self.last_seen = utcnow()

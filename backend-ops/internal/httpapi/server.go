@@ -47,6 +47,12 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/orders", s.PlaceOrder)
 	mux.HandleFunc("GET /api/v1/orders/{order_number}", s.GetOrder)
 
+	// Chat transcript for the local Ollama chat app. Scoped to the caller like
+	// the cart, so one rolling thread per user needs no thread id in the path.
+	mux.HandleFunc("GET /api/v1/chat/messages", s.ChatMessages)
+	mux.HandleFunc("POST /api/v1/chat/messages", s.AppendChatMessage)
+	mux.HandleFunc("DELETE /api/v1/chat/messages", s.ClearChatMessages)
+
 	// Admin surface. Unauthenticated like everything else; grouped under one
 	// prefix so a single middleware can gate it when real auth arrives.
 	mux.HandleFunc("GET /api/v1/admin/stats", s.requireAdmin(s.AdminStats))

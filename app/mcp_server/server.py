@@ -144,7 +144,25 @@ def search_products(
     limit: int = 20,
     per_category: int | None = None,
 ) -> dict[str, Any]:
-    """Search active products in the backend Stockroom PostgreSQL catalog."""
+    """Search active products in the backend Stockroom PostgreSQL catalog.
+
+    THE CATALOG IS IN JAPANESE. `query` is a plain substring match over the
+    product name and description, so an English word almost never matches:
+    "paper" finds nothing even though the catalog has 12 コピー用紙 products.
+
+    `category` is the parameter that understands English. It tries an exact
+    slug first, then substring-matches slug and display name with case and
+    separators folded, so category="paper" matches the copy_paper_toner group
+    and category="drinks" matches ドリンク・フード.
+
+    So: for an English request, put the user's words in `category`. Use `query`
+    only for a Japanese term, a brand, or a model number. Passing both narrows
+    to products matching the query inside those categories. Passing neither
+    returns the whole catalog grouped by category.
+
+    An empty result means no match, not an empty shop -- retry with the word in
+    `category` before telling the user the catalog has nothing.
+    """
     return search_products_handler(query, category, min_price, max_price, limit, per_category)
 
 
@@ -155,6 +173,15 @@ def get_product(product_id: int) -> dict[str, Any]:
 
 @mcp.tool(title="List Stockroom categories", annotations=annotations(True), meta=APP_CALLABLE, structured_output=True)
 def list_categories() -> dict[str, Any]:
+    """List every category with its product count.
+
+    Returns names only -- no products and no prices. The chat UI renders them
+    as clickable chips, so say the categories are shown rather than listing
+    them all in prose.
+
+    When the user wants to SEE products, call search_products(category=...)
+    instead; this tool alone never puts a product on screen.
+    """
     return list_categories_handler()
 
 

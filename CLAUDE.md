@@ -50,7 +50,7 @@ with `up`: `docker compose run --rm crawler crawl`.
 **Every port is loopback-bound and must stay that way** — see Identity below.
 Sign in as `alice@stockroom.local` (customer) or `admin@stockroom.local` (admin).
 
-## The four pieces
+## The pieces
 
 ### `backend-ops/` — Go API
 Owns all SQL and MinIO access. `net/http` stdlib routing, `pgx/v5`, `minio-go/v7` — no
@@ -107,6 +107,23 @@ deny-by-default. Rebuild it (`cd views && npm run build`) after changing the UI.
 Tools are read-only on purpose: product text is crawled from a live site, so a
 prompt injection could otherwise trigger order cancellation or price edits.
 
+### `chat-ui/` — React + Vite + Mantine 9
+The browser UI for the Ollama chat. Same stack and theme as `frontend-ops/`, deliberately:
+the two React apps should read as one product.
+
+```bash
+cd chat-ui && npm run dev     # 127.0.0.1:5174, proxies to the chat backend on :3002
+npm run build                 # tsc -b && vite build
+```
+
+`src/lib/sse.ts` parses the SSE frames off the fetch body by hand — `EventSource` cannot
+POST. `src/lib/transcript.ts` owns the `Entry` union the message list renders and the
+stored-message → `Entry` mapping that restores a conversation after a reload.
+
+`mediaUrl()` in `src/lib/api.ts` keeps only same-origin `/media/products/...` paths.
+Product text is crawled from a live site, so an absolute URL arriving in an image field
+must never become an `<img src>` pointing off this origin.
+
 ### `docs/api-contract.md` + `.yaml`
 The frozen interface between the Go service and the future MCP server. The markdown holds the
 **rationale**; the YAML (OpenAPI 3.1, validated) holds the **exact shapes**. If they disagree,
@@ -156,6 +173,15 @@ they would simply send the admin's id.
   `source_product_id`). `is_active` survives — the crawler never sets it.
 - **The default user's id is not 1.** `BIGSERIAL` advances on conflicting inserts. Resolve it
   by email; never hard-code.
+- **`chat_messages` is written only through the Go API.** `/api/v1/chat/messages` (GET,
+  POST, DELETE) is scoped to `currentUserID`, so one rolling thread per user needs no
+  thread id. The Python chat service persists over HTTP with `X-Stockroom-User` rather than
+  opening its own connection — that is what keeps "backend-ops owns all SQL" true. Writes
+  are best-effort: a failure warns and the chat still answers.
+- **Replayed history gives the model prose, not tool results.** Ollama requires a `tool`
+  message to follow the assistant message carrying the matching `tool_calls`, and those ids
+  do not survive a restart, so `history.model_messages` replays user/assistant text only.
+  The browser still re-renders cards from the stored `payload` column.
 
 ### Schema
 [backend-ops/schema.sql](backend-ops/schema.sql) is the single source of truth — the crawler's
@@ -181,16 +207,33 @@ catalog.
 - Build the crawler venv with `python3.13` (Homebrew). macOS's `/usr/bin/python3` is 3.9 on
   LibreSSL and makes urllib3 warn on every command.
 
-## Prior work — ignore for stockroom
+## `app/` — the local Ollama chat, now live
 
-[app/](app/) is an earlier MVP crawling **apparel.raksul.com** into a `raksul_db` database via
-SQLAlchemy, with its own chat-only MCP server. Different site, schema, and product. Its
-database is no longer in the compose file, so its CLI will fail. Do not extend it.
-`legacy/`, `plugins/`, `tests/` and the root `Makefile` belong to it too.
+[app/](app/) began as the apparel MVP but is now wired into compose and runs against
+stockroom: `app/mcp_server/` is the **shopping** MCP server (`shopping-mcp`, the commerce
+tools with the confirm-gated `place_order`), and `app/chat_app/` is the chat backend
+(`chat`) that hosts a local Ollama model and drives that MCP server over stdio.
+
+`app/chat_app/` serves **no HTML** — its browser UI is [chat-ui/](chat-ui/), a separate
+React service behind nginx, same shape as `frontend-ops/` → `api`. `proxy_buffering off`
+in [chat-ui/nginx.conf](chat-ui/nginx.conf) is load-bearing: `POST /api/chat` is an SSE
+stream and buffering would deliver the whole reply in one lump.
+
+Chat history is persisted through the Go API, never by Python directly — see the
+`chat_messages` note under Data model.
+
+`legacy/`, `plugins/` and the root `Makefile` are still dead weight from the apparel MVP;
+the Makefile's targets invoke `stockroom_crawler.cli` from the repository root, where the
+package no longer lives. `tests/` is **not** dead — it is the Python suite for `app/` and
+the crawler, run with `docker compose --profile test run --rm test-python`.
 
 ## What's left
 
-The MCP server: five tools (`search_products`, `get_quote`, `add_to_cart`, `place_order`,
-`get_order`), the `ui://` Views, and the **confirm-gate on `place_order`** — requirement.md
-requires it to be reachable only from the confirm View, and the Go service deliberately does
-not enforce that because it cannot see which View called it.
+The commerce tools and the confirm-gate now exist in `app/mcp_server/`, enforced by the chat
+UI: `place_order` is withheld from the model (`MODEL_BLOCKED_TOOLS` in
+[mcp_client.py](app/chat_app/mcp_client.py)) and reachable only from the Approve / Reject
+buttons on the confirmation card. The Go service still does not enforce it and cannot — it
+cannot see which caller invoked the endpoint.
+
+Not built: `ui://` Views for the commerce tools, so the flow renders in an MCP host
+(Claude Desktop) rather than only in `chat-ui/`. `mcp-ops/` shows the pattern.

@@ -16,11 +16,12 @@ stockroom.raksul.com
         ▲
         │  backend-ops/ (Go)  — the only process touching SQL or MinIO
         │
-   ┌────┴────────────────────┐
-   │                         │
-frontend-ops/ (React)   mcp-ops/ (Python, read-only admin)
-   via nginx                 │
-                      Claude Desktop / other MCP hosts
+   ┌────┼─────────────────────┬──────────────────────┐
+   │    │                     │                      │
+frontend-ops/         mcp-ops/ (Python)      app/chat_app/ (Python)
+ (React, nginx)     read-only admin tools    Ollama host + shopping MCP
+                             │                        │
+                    Claude Desktop / hosts      chat-ui/ (React, nginx)
 ```
 
 The crawler is an offline import step. At request time the MCP server only calls
@@ -28,7 +29,9 @@ the Go API — it never reaches the supplier's website and never runs SQL. Check
 is simulated; no money moves.
 
 Both the admin MCP (`mcp-ops/`) and the shopping MCP/chat (`app/`) run in Docker.
-They share the Go backend and retain their separate tool sets.
+They share the Go backend and retain their separate tool sets. The chat's own
+browser UI is a separate React service, [chat-ui/](chat-ui/), which proxies to
+the chat backend the same way `web` proxies to `api`.
 
 | Where to look | For |
 |---|---|
@@ -36,6 +39,7 @@ They share the Go backend and retain their separate tool sets.
 | [docs/mcp-tools.md](docs/mcp-tools.md) | The five tool declarations in full |
 | [docs/api-contract.md](docs/api-contract.md) | The Go ↔ MCP interface, and why it is shaped that way |
 | [crawler/README.md](crawler/README.md) | The crawler on its own |
+| [chat-ui/README.md](chat-ui/README.md) | The chat SPA, its nginx proxy and chat history |
 | [CLAUDE.md](CLAUDE.md) | Working on the code: layout, invariants, gotchas |
 
 ---
@@ -67,7 +71,8 @@ docker compose up -d --build --wait mcp shopping-mcp
 | `web` | http://127.0.0.1:3000 | Shop and admin dashboard |
 | `api` | http://127.0.0.1:8080 | Go API |
 | `mcp` | http://127.0.0.1:3001/mcp | Read-only admin MCP |
-| `chat` | http://127.0.0.1:3002 | Shopping chat using Ollama |
+| `chat-ui` | http://127.0.0.1:3004 | Shopping chat UI (React) — **open this one** |
+| `chat` | http://127.0.0.1:3002 | Chat backend: JSON and the SSE stream, no HTML |
 | `shopping-mcp` | http://127.0.0.1:3003/mcp | Shopping MCP, including confirmation-gated checkout |
 | `postgres` | 127.0.0.1:5432 | Database `stockroom`, user `raksul`, password `raksul_password` |
 | `minio` | http://127.0.0.1:9001 | Console, `minioadmin` / `minioadmin` |
@@ -279,6 +284,56 @@ curl -s -X POST 127.0.0.1:3001/mcp \
 The tool must carry `_meta.ui.resourceUri` and the resource must be served as
 `text/html;profile=mcp-app`. Both are verified working — if they are correct and
 the UI still does not render, it is a host-side limitation, not a server bug.
+
+---
+
+## 4. Chat with a local model
+
+Open <http://127.0.0.1:3004> and sign in with any name and email — the same
+demo identity the storefront uses, with no password.
+
+The page is a React app served by nginx ([chat-ui/](chat-ui/)); nginx proxies
+`/api`, `/media` and `/healthz` to the `chat` backend, so the browser sees one
+origin. `chat` itself serves no HTML: it answers JSON and streams the model's
+reply as Server-Sent Events.
+
+Ask for products in English, Japanese or Vietnamese. The model picks MCP tools
+from `shopping-mcp`; results render as product cards you can add to the cart
+directly, and the cart panel builds a mock order.
+
+**`place_order` is never offered to the model.** Only the Approve / Reject
+buttons on the confirmation card can reach it — the confirm gate
+[docs/requirement.md](docs/requirement.md) asks for.
+
+### Chat history
+
+The transcript is stored in Postgres and restored when you sign in again, so a
+`docker compose restart chat` (or a browser reload) no longer loses the
+conversation:
+
+```bash
+docker exec printing-service-postgres-1 psql -U raksul -d stockroom -c \
+  "SELECT role, tool_name, left(content, 60) FROM chat_messages ORDER BY id"
+```
+
+It is written through the Go API at `/api/v1/chat/messages`, not by the Python
+service directly — `backend-ops` stays the only process that touches SQL.
+Stored tool rows keep the structured MCP result in a `payload` column, which is
+what lets product cards re-render after a reload instead of collapsing to a bare
+"used a tool" note.
+
+Two things worth knowing:
+
+- **The model resumes with prose only.** Ollama requires a tool message to follow
+  the assistant message carrying the matching `tool_calls`, and those call ids do
+  not survive a restart — so replayed history gives the model the conversation,
+  not the raw tool results. You may see it re-run a tool it had already run.
+- **"New chat"** (`DELETE /api/chat/messages`) clears the stored transcript and
+  the model's context together. Signing out does not: sign back in with the same
+  email and the conversation returns.
+
+Persistence is best-effort by design. If the history endpoint is unreachable the
+chat still answers — it just logs a warning and forgets afterwards.
 
 ---
 

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from pathlib import Path
 from types import SimpleNamespace
 
+import httpx
 import pytest
 
 from app.chat_app.config import ChatSettings
@@ -111,14 +113,41 @@ class FakeHTTPResponse:
         self.content = content
         self.headers = {"content-type": content_type, "cache-control": "public, max-age=60"}
 
+    def json(self):
+        return json.loads(self.content)
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise httpx.HTTPStatusError("error", request=None, response=None)
+
 
 class FakeHTTP:
+    """Stands in for the shared httpx client.
+
+    The chat app uses it for two things: proxying /media, and persisting the
+    transcript through the Go API. Chat history is deliberately best-effort, so
+    these stubs answer rather than raise -- a test that made them fail would
+    only exercise the warn-and-continue path.
+    """
+
+    def __init__(self):
+        self.appended: list[dict] = []
+
     async def get(self, url, **kwargs):
         if url.endswith("missing.jpg"):
             return FakeHTTPResponse(404)
+        if url.endswith("/api/v1/chat/messages"):
+            return FakeHTTPResponse(200, b'{"messages": [], "count": 0}', "application/json")
         if url.endswith("/healthz") or url.endswith("/api/tags"):
             return FakeHTTPResponse(200, b"{}", "application/json")
         return FakeHTTPResponse()
+
+    async def post(self, url, **kwargs):
+        self.appended.append(kwargs.get("json") or {})
+        return FakeHTTPResponse(201, b"{}", "application/json")
+
+    async def delete(self, url, **kwargs):
+        return FakeHTTPResponse(204, b"{}", "application/json")
 
 
 def settings():

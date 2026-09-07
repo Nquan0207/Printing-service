@@ -3,25 +3,24 @@ from __future__ import annotations
 import asyncio
 from contextlib import asynccontextmanager
 import json
-from pathlib import Path, PurePosixPath
+from pathlib import PurePosixPath
 from typing import Any, AsyncIterator
 from urllib.parse import quote
 
 from fastapi import FastAPI, HTTPException, Request, Response
-from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
-from fastapi.staticfiles import StaticFiles
+from fastapi.responses import JSONResponse, StreamingResponse
 import httpx
 from pydantic import BaseModel, Field
 import uvicorn
 
 from app.chat_app.config import ChatSettings
+from app.chat_app.history import ChatHistory, model_messages
 from app.chat_app.mcp_client import StockroomMCPConnection
 from app.chat_app.ollama_agent import OllamaAgent
-from app.chat_app.sessions import ChatSession, SessionStore, public_payload
+from app.chat_app.sessions import SYSTEM_PROMPT, ChatSession, SessionStore, public_payload
 
 
 COOKIE_NAME = "stockroom_chat_session"
-STATIC_DIR = Path(__file__).with_name("static")
 
 
 class LoginRequest(BaseModel):
@@ -117,6 +116,7 @@ def create_app(
         app.state.http = client
         app.state.sessions = store
         app.state.agent = chat_agent
+        app.state.history = ChatHistory(client, config.stockroom_api_url)
         try:
             yield
         finally:
@@ -125,18 +125,15 @@ def create_app(
             if owns_http:
                 await client.aclose()
 
+    # No static files: the UI is a separate React service (chat-ui/) that
+    # proxies here, so this process serves JSON and the SSE stream only.
     app = FastAPI(title="Stockroom Ollama Chat", lifespan=lifespan)
-    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
     async def current_session(request: Request) -> ChatSession:
         state = await request.app.state.sessions.get(request.cookies.get(COOKIE_NAME))
         if state is None or state.user is None:
             raise HTTPException(401, "Demo sign-in is required.")
         return state
-
-    @app.get("/", include_in_schema=False)
-    async def index():
-        return FileResponse(STATIC_DIR / "index.html")
 
     @app.post("/api/session/login")
     async def login(body: LoginRequest, request: Request, response: Response):
@@ -160,6 +157,12 @@ def create_app(
         except BaseException:
             await request.app.state.sessions.delete(state.token)
             raise
+        # Resume: the browser re-renders the whole transcript, while the model
+        # gets only the prose (see history.model_messages for why).
+        transcript = []
+        if state.user_id is not None:
+            transcript = await request.app.state.history.load(state.user_id)
+            state.messages = model_messages(SYSTEM_PROMPT, transcript)
         response.set_cookie(
             COOKIE_NAME,
             state.token,
@@ -169,13 +172,21 @@ def create_app(
             secure=False,
             path="/",
         )
-        return {"authenticated": True, "user": state.user, "cart": state.cart}
+        return {
+            "authenticated": True,
+            "user": state.user,
+            "cart": state.cart,
+            "transcript": transcript,
+        }
 
     @app.get("/api/session")
     async def session_info(request: Request):
         state = await request.app.state.sessions.get(request.cookies.get(COOKIE_NAME))
         if state is None or state.user is None:
             return {"authenticated": False}
+        transcript = []
+        if state.user_id is not None:
+            transcript = await request.app.state.history.load(state.user_id)
         return {
             "authenticated": True,
             "user": state.user,
@@ -183,6 +194,7 @@ def create_app(
             "confirmation": public_payload({"confirmation": state.confirmation})["confirmation"],
             "confirmation_decision": state.confirmation_decision,
             "order": state.order,
+            "transcript": transcript,
         }
 
     @app.delete("/api/session")
@@ -198,21 +210,68 @@ def create_app(
         if not user_message:
             raise HTTPException(400, "message cannot be blank.")
 
+        history = request.app.state.history
+        user_id = state.user_id
+
         async def stream() -> AsyncIterator[str]:
+            # Written as the conversation happens, not at the end: if the model
+            # stalls or the browser disconnects, whatever the user already saw
+            # is still in Postgres.
+            if user_id is not None:
+                await history.append(user_id, "user", user_message)
+            pending: list[str] = []
+
+            async def flush_assistant() -> None:
+                text = "".join(pending).strip()
+                pending.clear()
+                if text and user_id is not None:
+                    await history.append(user_id, "assistant", text)
+
             try:
                 async with state.lock:
                     async for event in request.app.state.agent.events(state, user_message):
+                        kind = event.get("type")
+                        if kind == "assistant_delta":
+                            pending.append(event.get("text") or "")
+                        elif kind == "tool_started":
+                            # An assistant turn ends when it calls a tool.
+                            await flush_assistant()
+                        elif kind == "tool_result" and user_id is not None:
+                            tool = event.get("tool") or "unknown"
+                            await history.append(
+                                user_id,
+                                "tool",
+                                f"Using MCP tool: {tool}",
+                                tool_name=tool,
+                                payload=event.get("result"),
+                            )
+                        elif kind == "done":
+                            await flush_assistant()
                         yield _sse(event)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                yield _sse({"type": "error", "message": str(exc)})
+                await flush_assistant()
+                message = str(exc)
+                if user_id is not None:
+                    await history.append(user_id, "assistant", message)
+                yield _sse({"type": "error", "message": message})
 
         return StreamingResponse(
             stream(),
             media_type="text/event-stream",
             headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
         )
+
+    @app.delete("/api/chat/messages")
+    async def clear_chat(request: Request):
+        """Start a new conversation: forget it in Postgres and in the model."""
+        state = await current_session(request)
+        async with state.lock:
+            if state.user_id is not None:
+                await request.app.state.history.clear(state.user_id)
+            state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+        return {"status": "ok"}
 
     @app.post("/api/cart/items")
     async def add_cart_item(body: AddCartItemRequest, request: Request):
@@ -231,6 +290,13 @@ def create_app(
                 )
             )
             state.ingest(cart_result, "add_to_cart")
+            quote = quote_result.get("quote") or {}
+            if state.user_id is not None and quote:
+                await request.app.state.history.append(
+                    state.user_id,
+                    "assistant",
+                    f"{quote.get('product_name')} added — ¥{quote.get('subtotal_jpy'):,}.",
+                )
             return {"status": "ok", "quote": quote_result.get("quote"), "cart": state.cart}
 
     @app.delete("/api/cart/items/{item_id}")
@@ -274,6 +340,14 @@ def create_app(
             state.confirmation_decision = decision
             if decision == "approve":
                 state.cart = {"items": [], "item_count": 0, "total_jpy": 0}
+            if state.user_id is not None:
+                order = result.get("order") or {}
+                note = (
+                    f"Mock order {order.get('order_number')} confirmed. No money moved."
+                    if decision == "approve"
+                    else "Mock order rejected. Your cart was preserved."
+                )
+                await request.app.state.history.append(state.user_id, "assistant", note)
             return result
 
     @app.get("/media/{media_path:path}")
