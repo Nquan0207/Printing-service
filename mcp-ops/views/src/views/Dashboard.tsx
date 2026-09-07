@@ -4,6 +4,7 @@ import { AreaChart, BarChart, ChartCard, Empty, RowChart } from "../components/C
 import { ErrorPanel, Shell } from "../components/Shell";
 import { createApp, readResult } from "../lib/mcp";
 import { shortDate, yen } from "../lib/format";
+import { SERIES_PRICE } from "../lib/palette";
 
 /** Shape returned by GET /api/v1/admin/stats, via the get_dashboard tool. */
 type Stats = {
@@ -115,7 +116,7 @@ export default function Dashboard() {
           <RowChart points={cats.map((c) => ({ label: c.name, value: c.count }))} />
         </ChartCard>
         <ChartCard title="Unit price distribution">
-          <BarChart color="var(--mantine-color-yellow-6)"
+          <BarChart color={SERIES_PRICE}
             points={buckets.map((b) => ({ label: b.label, value: b.count, hint: `${b.count} sizes` }))} />
         </ChartCard>
       </SimpleGrid>

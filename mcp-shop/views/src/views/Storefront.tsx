@@ -16,7 +16,7 @@ type Group = { category: { slug: string; name: string }; count: number; products
 type CartItem = { id: number; product_name: string; size_name: string; quantity: number; subtotal_jpy: number };
 type Cart = { items: CartItem[]; item_count: number; total_jpy: number };
 type User = { name: string; email: string };
-type Confirmation = { shipping_address: string };
+type Confirmation = { token: string; shipping_address: string };
 type Order = { order_number: string; total_jpy: number };
 
 /** Products per page inside a category. */
@@ -246,17 +246,28 @@ export default function Storefront() {
       setMessage({ text: "Review the confirmation before approving." });
     });
 
-  const decide = (decision: "approve" | "reject") =>
-    run(() => callTool("place_order", { decision }), (out) => {
-      setConfirmation(null);
-      if (decision === "approve") {
-        setOrder(out.order);
-        setCart({ items: [], item_count: 0, total_jpy: 0 });
-        setMessage({ text: "Mock order stored in the Stockroom database." });
-      } else {
-        setMessage({ text: "Rejected. Database cart preserved." });
-      }
-    });
+  const decide = (decision: "approve" | "reject") => {
+    // place_order takes the token prepare_order issued -- it is the capability
+    // that authorises the write, not a formality. Without it the tool rejects
+    // the call and no order is ever placed.
+    if (!confirmation?.token) {
+      setMessage({ text: "Prepare the order again — its confirmation has been lost.", bad: true });
+      return;
+    }
+    return run(
+      () => callTool("place_order", { confirmation_token: confirmation.token, decision }),
+      (out) => {
+        setConfirmation(null);
+        if (decision === "approve") {
+          setOrder(out.order);
+          setCart({ items: [], item_count: 0, total_jpy: 0 });
+          setMessage({ text: "Mock order stored in the Stockroom database." });
+        } else {
+          setMessage({ text: "Rejected. Database cart preserved." });
+        }
+      },
+    );
+  };
 
   const shown = active ? cache[active] ?? [] : [];
   const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));

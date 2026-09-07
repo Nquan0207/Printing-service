@@ -11,6 +11,7 @@
  */
 import { Paper, Text } from "@mantine/core";
 import { shortYen } from "../lib/format";
+import { SERIES_CATEGORY, SERIES_ORDERS, SERIES_REVENUE } from "../lib/palette";
 
 export type Series = { label: string; value: number; hint?: string };
 
@@ -96,8 +97,8 @@ export function AreaChart({ points, fmt = shortYen }: { points: Series[]; fmt?: 
     <svg viewBox={`0 0 ${W} ${H}`} role="img"
       style={{ width: "100%", height: "auto", display: "block", overflow: "visible" }}>
       <Gridlines max={max} fmt={fmt} />
-      <path d={area} fill="var(--mantine-color-raksul-6)" opacity={0.13} />
-      <path d={line} fill="none" stroke="var(--mantine-color-raksul-6)" strokeWidth={2} strokeLinejoin="round" />
+      <path d={area} fill={SERIES_REVENUE} opacity={0.13} />
+      <path d={line} fill="none" stroke={SERIES_REVENUE} strokeWidth={2} strokeLinejoin="round" />
       {/* Dots carry the <title>: a 1px line is far too thin to hover. */}
       {points.map((p, i) => (
         <circle key={i} cx={x(i)} cy={y(p.value)} r={7} fill="transparent">
@@ -111,7 +112,7 @@ export function AreaChart({ points, fmt = shortYen }: { points: Series[]; fmt?: 
 
 /** Vertical bars -- orders per day, price distribution. */
 export function BarChart({
-  points, fmt = (n: number) => String(n), color = "var(--mantine-color-teal-6)",
+  points, fmt = (n: number) => String(n), color = SERIES_ORDERS,
 }: { points: Series[]; fmt?: (n: number) => string; color?: string }) {
   if (points.length === 0) return <Empty />;
   const max = niceMax(Math.max(...points.map((p) => p.value), 1));
@@ -128,7 +129,7 @@ export function BarChart({
         return (
           <g key={i}>
             <rect x={cx(i) - width / 2} y={PAD.top + PLOT_H - h} width={width}
-              height={Math.max(h, 0)} rx={2} fill={color} />
+              height={Math.max(h, 0)} rx={4} fill={color} />
             {/* Zero still gets a hover target, otherwise a quiet day is unreadable. */}
             <rect x={cx(i) - slot / 2} y={PAD.top} width={slot} height={PLOT_H} fill="transparent">
               <title>{`${p.label} — ${p.hint ?? fmt(p.value)}`}</title>
@@ -164,7 +165,7 @@ export function RowChart({ points, fmt = (n: number) => String(n) }: { points: S
           }}>
             <span style={{
               display: "block", height: "100%", borderRadius: 3,
-              background: "var(--mantine-color-indigo-5)",
+              background: SERIES_CATEGORY,
               width: `${((p.value / max) * 100).toFixed(1)}%`,
             }} />
           </span>
