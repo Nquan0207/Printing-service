@@ -5,11 +5,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 
-<<<<<<< Updated upstream
-from app.chat_app.sessions import ChatSession, public_payload
-=======
 from app.chat_app.sessions import ChatSession, model_payload, public_payload
->>>>>>> Stashed changes
 
 
 class AgentLimitError(RuntimeError):
@@ -25,12 +21,14 @@ class OllamaAgent:
         *,
         max_rounds: int = 6,
         max_tool_calls: int = 8,
+        timeout_seconds: int = 600,
     ):
         self.client = client
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.max_rounds = max_rounds
         self.max_tool_calls = max_tool_calls
+        self.timeout_seconds = timeout_seconds
 
     async def _round(
         self, messages: list[dict[str, Any]], tools: list[dict[str, Any]]
@@ -44,7 +42,8 @@ class OllamaAgent:
         }
         try:
             async with self.client.stream(
-                "POST", f"{self.base_url}/api/chat", json=payload
+                "POST", f"{self.base_url}/api/chat", json=payload,
+                timeout=httpx.Timeout(self.timeout_seconds, connect=5.0)
             ) as response:
                 if response.status_code >= 400:
                     detail = (await response.aread()).decode(errors="replace")[:500]
@@ -55,6 +54,11 @@ class OllamaAgent:
                     if not line.strip():
                         continue
                     yield json.loads(line)
+        except httpx.TimeoutException as exc:
+            raise RuntimeError(
+                f"Ollama did not respond within {self.timeout_seconds}s. "
+                "Allow more CPU/RAM in Docker or increase OLLAMA_TIMEOUT_SECONDS."
+            ) from exc
         except httpx.ConnectError as exc:
             raise RuntimeError(
                 f"Ollama is unavailable at {self.base_url}. Start Ollama and pull {self.model}."
@@ -135,17 +139,11 @@ class OllamaAgent:
 
                 visible_result = public_payload(result)
                 yield {"type": "tool_result", "tool": name, "result": visible_result}
-<<<<<<< Updated upstream
-=======
                 compact_result = model_payload(result)
->>>>>>> Stashed changes
                 state.messages.append(
                     {
                         "role": "tool",
                         "tool_name": name or "unknown",
-<<<<<<< Updated upstream
-                        "content": json.dumps(visible_result, ensure_ascii=False),
-=======
                         "content": json.dumps(
                             {
                                 "ui_status": (
@@ -156,7 +154,6 @@ class OllamaAgent:
                             },
                             ensure_ascii=False,
                         ),
->>>>>>> Stashed changes
                     }
                 )
 

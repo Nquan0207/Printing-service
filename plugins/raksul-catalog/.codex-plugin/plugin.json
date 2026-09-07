@@ -1,6 +1,6 @@
 {
   "name": "raksul-catalog",
-  "version": "0.1.0+codex.20260905123306",
+  "version": "0.1.0+codex.20260907045436",
   "description": "Render the Stockroom database storefront through its loopback Go backend.",
   "author": {
     "name": "RAKSUL Catalog local developer"

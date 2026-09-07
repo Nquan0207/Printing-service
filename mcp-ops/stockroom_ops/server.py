@@ -13,6 +13,7 @@ from typing import Annotated, Any
 
 from mcp.server.apps import Apps, ResourceCsp
 from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import BeforeValidator, Field
 
@@ -539,7 +540,13 @@ def main() -> None:
     log.info("MCP endpoint http://%s:%s/mcp", settings.host, settings.port)
     log.info("backend %s as %s", settings.api_base, settings.admin_email)
     uvicorn.run(
-        server.streamable_http_app(json_response=True),
+        server.streamable_http_app(
+            json_response=True,
+            transport_security=TransportSecuritySettings(
+                allowed_hosts=["127.0.0.1:*", "localhost:*", "[::1]:*", "mcp:3001"],
+                allowed_origins=["http://127.0.0.1:*", "http://localhost:*", "http://[::1]:*"],
+            ),
+        ),
         host=settings.host,
         port=settings.port,
         log_level="warning",

@@ -27,9 +27,8 @@ The crawler is an offline import step. At request time the MCP server only calls
 the Go API — it never reaches the supplier's website and never runs SQL. Checkout
 is simulated; no money moves.
 
-**Status:** the admin-ops MCP server is built and working. The *commerce* MCP
-server (`search_products`, `get_quote`, `add_to_cart`, `place_order`, `get_order`)
-is not — see [What's left](#whats-left).
+Both the admin MCP (`mcp-ops/`) and the shopping MCP/chat (`app/`) run in Docker.
+They share the Go backend and retain their separate tool sets.
 
 | Where to look | For |
 |---|---|
@@ -41,68 +40,77 @@ is not — see [What's left](#whats-left).
 
 ---
 
-## Run it
+## Run it — Docker only
 
-Everything runs in Docker. You need **Docker Desktop** and nothing else — no
-Python, Node, or Go on your machine.
+Install Docker Desktop (or Docker Engine with the Compose plugin), clone the
+repository, and run from its root. No native Python, Node, Go or Ollama is needed:
 
 ```bash
-git clone <this repo> && cd Printing-service
-docker compose up -d --build
+docker compose up -d --build --wait
 ```
 
-That builds and starts five services. First build takes a few minutes; after
-that it is seconds.
+Optional settings are in `.env.example`; copy it to `.env` only to customize.
+Startup uses the existing PostgreSQL database and MinIO bucket. It does not
+run the crawler, initialize schemas, or validate them through a bootstrap job.
+The API waits only for PostgreSQL and MinIO to be healthy.
 
-| Service | URL | What it is |
+Ollama downloads **qwen3:8b** if needed and reuses the model on later starts.
+It uses CPU by default. `OLLAMA_TIMEOUT_SECONDS` defaults to 600 for CPU inference.
+If you only need MCP for ChatGPT/Claude, start without chat or Ollama:
+
+```bash
+docker compose up -d --build --wait mcp shopping-mcp
+```
+
+| Service | Host URL | Purpose |
 |---|---|---|
-| `web` | <http://127.0.0.1:3000> | Shop + admin dashboard (React, served by nginx) |
-| `api` | <http://127.0.0.1:8080> | Go JSON API — the only process touching SQL or MinIO |
-| `mcp` | <http://127.0.0.1:3001/mcp> | MCP Apps server (Python) for AI hosts |
-| `postgres` | 127.0.0.1:5432 | database `stockroom` |
-| `minio` | <http://127.0.0.1:9001> | product images, console login `minioadmin` / `minioadmin` |
+| `web` | http://127.0.0.1:3000 | Shop and admin dashboard |
+| `api` | http://127.0.0.1:8080 | Go API |
+| `mcp` | http://127.0.0.1:3001/mcp | Read-only admin MCP |
+| `chat` | http://127.0.0.1:3002 | Shopping chat using Ollama |
+| `shopping-mcp` | http://127.0.0.1:3003/mcp | Shopping MCP, including confirmation-gated checkout |
+| `postgres` | 127.0.0.1:5432 | Database `stockroom`, user `raksul`, password `raksul_password` |
+| `minio` | http://127.0.0.1:9001 | Console, `minioadmin` / `minioadmin` |
 
-Check they came up healthy:
+All published ports stay loopback-only. Containers use service DNS (`api`,
+`postgres`, `minio`, `ollama`); browsers use the host URLs above. Change the
+`*_HOST_PORT` variables in `.env` if a port is occupied. Do not replace internal
+service URLs with localhost. The stack retains the existing `raksul_postgres_data`
+and `raksul_minio_data` volume names; it does not migrate older differently named volumes.
 
-```bash
-docker compose ps          # all five should say (healthy)
-curl -s 127.0.0.1:8080/healthz
-# {"status":"ok","database":"ok","minio":"ok"}
-```
-
-> **Every port binds `127.0.0.1` deliberately.** The API trusts an identity
-> header without verifying it, so exposing these ports would let anyone act as
-> any user. Never change a ports line to `"8080:8080"`.
-
----
-
-## 1. Load the catalog
-
-A fresh database is empty. The crawler fetches real products from
-stockroom.raksul.com and stores images in MinIO. It is a one-shot tool, so it
-does not start with `docker compose up`:
+Check service startup from another terminal:
 
 ```bash
-docker compose run --rm crawler init-db     # create the tables
-docker compose restart api                  # re-grant admin, see the warning below
-docker compose run --rm crawler crawl       # ~25 min: 70 products, 8 categories
-docker compose run --rm crawler stats       # what landed
+docker compose logs -f api model-init chat
+docker compose ps -a
 ```
 
-`crawl` commits per product, so you can stop it (Ctrl-C) and re-run it later
-without losing what it already imported.
+`model-init` should show `Exited (0)`; long-running services should be healthy.
+To remove containers left over from the former automatic bootstrap configuration,
+run `docker compose up -d --build --wait --remove-orphans`. Named volumes are kept.
 
-Faster for a first look:
+## 1. Load more catalog data
+
+Crawling is manual only. For an empty installation, explicitly prepare the schema
+and bucket first (existing incompatible schemas require a reviewed migration):
 
 ```bash
-docker compose run --rm -e CRAWL_MAX_PRODUCTS=10 crawler crawl
+docker compose run --rm --build crawler bootstrap
 ```
 
-> `init-db` **drops every table**, users and orders included. Because `is_admin`
-> is granted only at API startup, running it against a live `api` leaves you with
-> no administrator and every `/api/v1/admin/*` call returning 403 — hence the
-> `docker compose restart api` above. To re-import only the catalog later, use
-> `crawler crawl --reset`, which leaves `users` and `orders` alone.
+To import data or inspect counts:
+
+```bash
+docker compose run --rm crawler crawl
+docker compose run --rm crawler stats
+# Smaller manual crawl:
+docker compose run --rm -e CRAWL_MAX_PRODUCTS=3 -e CRAWL_MAX_CATEGORIES=1 crawler crawl
+```
+
+Crawling preserves size IDs referenced by carts and orders. Startup never uses
+`init-db`. That manual command is destructive and reserved for an intentional
+reset. `make reset-db CONFIRM_RESET=1` stops the stack, resets application tables,
+and restarts the services without crawling; MinIO objects and downloaded models remain.
 
 ---
 
@@ -157,19 +165,33 @@ Add an `mcpServers` block, keeping anything already in the file:
     "stockroom-ops": {
       "command": "docker",
       "args": [
-        "compose",
-        "-f", "/ABSOLUTE/PATH/TO/Printing-service/docker-compose.yml",
-        "run", "--rm", "-i",
-        "mcp", "--transport", "stdio"
+        "exec", "-i", "stockroom-admin-mcp",
+        "python", "-m", "stockroom_ops.server", "--transport", "stdio"
       ]
     }
   }
 }
 ```
 
-Replace `/ABSOLUTE/PATH/TO/` with the real path — `pwd` in the repo prints it.
-Paths must be absolute: Claude Desktop does not inherit your shell's working
-directory or `PATH`.
+Start the stack before connecting the host. The Docker CLI must be available to
+the host application. No repository path or Python path is required.
+
+For shopping tools, add a second entry:
+
+```json
+{
+  "mcpServers": {
+    "raksul_catalog": {
+      "command": "docker",
+      "args": ["exec", "-i", "stockroom-shopping-mcp", "python", "-m", "app.mcp_server.server"]
+    }
+  }
+}
+```
+
+The repository plugin uses this shopping configuration. HTTP-capable clients can
+instead use the two `/mcp` URLs above. These local URLs are for clients on the
+same machine, not remotely hosted clients.
 
 Then **fully quit Claude Desktop (⌘Q) and reopen it** — the config is read only
 at launch.
@@ -234,33 +256,12 @@ could otherwise talk the model into a destructive call. The write endpoints
 exist on the Go API and are reachable from the admin web UI at
 <http://127.0.0.1:3000>.
 
-### If Docker startup is too slow
+### Optional native development
 
-`docker compose run` starts a container per launch. To run the server directly
-on your machine instead:
-
-```bash
-cd mcp-ops
-python3.13 -m venv .venv && ./.venv/bin/pip install -r requirements.txt
-cd views && npm install && npm run build     # builds the UI the server serves
-```
-
-```json
-{
-  "mcpServers": {
-    "stockroom-ops": {
-      "command": "/ABSOLUTE/PATH/TO/Printing-service/mcp-ops/.venv/bin/python",
-      "args": ["-m", "stockroom_ops.server", "--transport", "stdio"],
-      "cwd": "/ABSOLUTE/PATH/TO/Printing-service/mcp-ops"
-    }
-  }
-}
-```
-
-The `npm run build` step is not optional: the server reads each View out of
-`mcp-ops/views/dist/` at startup and exits if one is missing. `docker compose
-up -d` must still be running either way — the MCP server reads everything
-through the Go API.
+Partner setup uses Docker, including stdio via `docker exec`. Developers who want
+to run individual services natively can use the component READMEs. Keep native
+virtualenv paths out of shared MCP configuration. Native chat retains loopback
+validation; container mode explicitly permits only the API/Ollama service names.
 
 ### If the tool runs but shows text instead of a UI
 
@@ -293,27 +294,18 @@ docker compose down -v                # stop and DELETE the database + images
 
 ### Stopping cleanly
 
-Use `--remove-orphans`. Plain `docker compose down` leaves behind one-off
-containers created by `docker compose run` — including the stdio container
-Claude Desktop launches — and you get:
-
-```
-! Network printing-service_default   Resource is still in use
-```
-
-Those containers hold the network open. A stdio MCP server waits on stdin
-forever, so it never exits and `--rm` never fires. If one is stuck:
-
 ```bash
-docker ps -a --filter "label=com.docker.compose.project=printing-service"
-docker rm -f <name>
+docker compose down                 # removes containers, preserves all data
+# Or stop without removing containers:
+docker compose stop
 ```
 
-| Command | Containers | Network | Data |
-|---|---|---|---|
-| `docker compose stop` | paused | kept | kept |
-| `docker compose down --remove-orphans` | removed | removed | **kept** |
-| `docker compose down -v` | removed | removed | **DELETED — re-crawl needed** |
+MCP stdio processes run inside existing containers, so stopping those containers
+also closes their sessions. Avoid `down -v` unless you intend to delete database,
+images, and the downloaded model. Fixed MCP container names allow path-free client
+configuration. To run a second stack, set `SHOPPING_MCP_CONTAINER_NAME`,
+`ADMIN_MCP_CONTAINER_NAME`, and all host ports separately, and use another Compose
+project name. Update that stack's MCP client names accordingly.
 
 ### Seeing which API is called
 
@@ -350,8 +342,8 @@ STOCKROOM_LOG_LEVEL=debug docker compose up -d api
 Inspect the database directly:
 
 ```bash
-docker exec printing-service-postgres-1 psql -U raksul -d stockroom -c "\dt"
-docker exec printing-service-postgres-1 psql -U raksul -d stockroom -c \
+docker compose exec -T postgres psql -U raksul -d stockroom -c "\dt"
+docker compose exec -T postgres psql -U raksul -d stockroom -c \
   "SELECT name, base_price_jpy FROM products LIMIT 5;"
 ```
 
@@ -400,10 +392,16 @@ and `minio`. Do not replace those with host addresses.
 **`web` is healthy but shows nothing** — check `api` is healthy too; the SPA
 loads but every request 502s if the API is down.
 
-**`api` is unhealthy, logs say `relation "users" does not exist`** — the schema
-was never created. Run `docker compose run --rm crawler init-db`.
+**API reports missing tables/bucket** — confirm that Compose is using the database
+and MinIO volume holding your existing data. Automatic schema initialization is
+disabled. For a new empty installation, run the manual `crawler bootstrap` command
+above. Do not run `init-db` against data you need to keep.
 
-**Crawler says the catalog is empty** — run `init-db` before `crawl`.
+**Crawler says the catalog is empty** — crawl manually when you want to import
+products; normal service startup does not run it.
+
+**Chat is unhealthy** — inspect `docker compose logs model-init chat`. `/healthz`
+checks both the API and the configured model in Ollama, not just its TCP port.
 
 **Admin dashboard or MCP tools return 403** — either you signed in as a
 customer, or `init-db` dropped `users` while `api` kept running, so nobody holds
@@ -431,28 +429,17 @@ python3 ~/.codex/skills/.system/plugin-creator/scripts/update_plugin_cachebuster
 Sau đó thoát hoàn toàn ChatGPT Desktop, mở lại và tạo chat mới. Không cần chạy
 hai lệnh này khi chỉ crawl thêm dữ liệu hoặc cập nhật dữ liệu PostgreSQL/MinIO.
 
-## Cấu hình
+## Docker verification
 
-Các biến đầy đủ nằm trong `.env.example`:
+```bash
+make test                 # Python unit tests and Go checks in containers
+make test-e2e             # uses the running API and crawled catalog
+make test-chat-e2e        # uses the running chat and installed Ollama model
+docker compose run --rm --build -e DOCKER_MCP_E2E=1 test-python python -m pytest -q tests/test_docker_mcp.py
+docker compose exec -T shopping-mcp python - < docker/check-mcp.py
+docker compose exec -T -e MCP_CHECK_MODULE=stockroom_ops.server mcp python - < docker/check-mcp.py
+# Bootstrap integration tests create/drop their own disposable databases:
+docker compose run --rm --build -e BOOTSTRAP_TEST_DATABASE_URL=postgresql://raksul:raksul_password@postgres:5432/stockroom test-python python -m pytest -q tests/test_docker_bootstrap.py
+```
 
-- `STOCKROOM_DATABASE_URL` và `MINIO_*` cho crawler chạy trên host.
-- `CRAWL_*` cho giới hạn, số ảnh và delay.
-- `STOCKROOM_API_URL` cho MCP.
-- `MCP_HOST`, `MCP_PORT`, `MCP_TRANSPORT` cho MCP server.
-- `OLLAMA_URL`, `OLLAMA_MODEL` và `CHAT_*` cho local chat host.
-
-Docker Compose sử dụng hostname nội bộ `postgres` và `minio`; không thay các
-URL đó bằng địa chỉ host.
-
-make infra
-make crawl
-make api
-make health
-make mcp
-make mcp-http
-make ollama-pull
-make chat
-make chat-health
-make test-chat-e2e
-make test
-make test-e2e
+The `Makefile` is optional convenience; every command it runs is Docker Compose.

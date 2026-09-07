@@ -26,7 +26,7 @@ from app.mcp_server.tools import (
 mcp = FastMCP(
     "raksul-stockroom-commerce",
     instructions=(
-        "Render the embedded Stockroom storefront and use only the Go backend at 127.0.0.1:8080, "
+        "Render the embedded Stockroom storefront and use only the configured Go backend, "
         "whose PostgreSQL database is the commerce source of truth. Never open a supplier website. "
         "Before place_order, call prepare_order, summarize the cart and address, and obtain an explicit "
         "approve or reject decision. This is a mock checkout and never moves money."

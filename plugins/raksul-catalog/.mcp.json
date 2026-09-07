@@ -1,14 +1,23 @@
 {
   "mcpServers": {
     "raksul_catalog": {
-      "command": "/Users/quan0207/Practice/printing service/.venv/bin/python",
-      "args": ["-m", "app.mcp_server.server"],
+      "command": "docker",
+      "args": [
+        "exec", "-i", "stockroom-shopping-mcp",
+        "python", "-m", "app.mcp_server.server"
+      ],
       "enabled": true,
-      "startup_timeout_sec": 30,
-      "env": {
-        "PYTHONPATH": "/Users/quan0207/Practice/printing service",
-        "STOCKROOM_API_URL": "http://127.0.0.1:8080"
-      }
+      "startup_timeout_sec": 30
+    },
+    "raksul_ops": {
+      "command": "docker",
+      "args": [
+        "exec", "-i", "stockroom-admin-mcp",
+        "python", "-m", "stockroom_ops.server",
+        "--transport", "stdio"
+      ],
+      "enabled": true,
+      "startup_timeout_sec": 30
     }
   }
 }

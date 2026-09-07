@@ -23,14 +23,6 @@ def public_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return output
 
 
-<<<<<<< Updated upstream
-SYSTEM_PROMPT = """You are the local Stockroom shopping assistant.
-Use the supplied tools for every catalog fact, product ID, size ID, price, cart total, and order number.
-Never invent catalog data. Ask for a size or quantity when it is missing.
-Only modify the cart when the user clearly asks. You may prepare an order, but you cannot place it;
-the user must approve or reject the confirmation card in the interface. Checkout is a mock and moves no money.
-Keep answers concise and reply in the user's language.
-=======
 def model_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Keep useful commerce facts but hide UI-only image fields from the model."""
 
@@ -67,7 +59,6 @@ UI response policy:
 - For search results, say only how many matches were found and invite the user to use the displayed cards.
 - For cart results, state only the item count and total when useful; let the cart panel show line details.
 - A greeting or a general non-shopping question may be answered directly, briefly, without a tool.
->>>>>>> Stashed changes
 """
 
 

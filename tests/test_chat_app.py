@@ -10,11 +10,7 @@ from app.chat_app.config import ChatSettings
 from app.chat_app.main import COOKIE_NAME, _valid_media_path, create_app
 from app.chat_app.mcp_client import MODEL_BLOCKED_TOOLS, ollama_tools
 from app.chat_app.ollama_agent import OllamaAgent
-<<<<<<< Updated upstream
-from app.chat_app.sessions import ChatSession, SessionStore, utcnow
-=======
 from app.chat_app.sessions import ChatSession, SessionStore, model_payload, utcnow
->>>>>>> Stashed changes
 
 
 EMPTY_CART = {"items": [], "item_count": 0, "total_jpy": 0}
@@ -148,8 +144,6 @@ def test_mcp_tool_conversion_hides_identity_ui_and_order_decision():
     assert converted[0]["function"]["parameters"] == {"type": "object"}
 
 
-<<<<<<< Updated upstream
-=======
 def test_model_payload_keeps_product_facts_but_removes_ui_images_and_token():
     payload = {
         "status": "ok",
@@ -163,7 +157,6 @@ def test_model_payload_keeps_product_facts_but_removes_ui_images_and_token():
     assert compact["confirmation"] == {"shipping_address": "Tokyo"}
 
 
->>>>>>> Stashed changes
 def test_ollama_agent_runs_mcp_tool_loop_and_returns_text():
     async def scenario():
         mcp = FakeMCP(Path.cwd(), "http://127.0.0.1:8080")

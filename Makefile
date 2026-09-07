@@ -1,64 +1,69 @@
 SHELL := /bin/sh
-PYTHON := .venv/bin/python
-PIP := .venv/bin/pip
+COMPOSE := docker compose
 
-.PHONY: setup infra reset-db crawl-smoke crawl api health mcp mcp-http ollama-pull chat chat-health test test-python test-go test-e2e test-chat-e2e stats
+.PHONY: setup up down infra reset-db crawl-smoke crawl api health mcp mcp-http ollama-pull chat chat-health test test-python test-go test-e2e test-chat-e2e stats logs
+setup up:
+	$(COMPOSE) up -d --build --wait
 
-setup:
-	@test -x "$(PYTHON)" || python3 -m venv .venv
-	$(PIP) install -r requirements.txt
+down:
+	$(COMPOSE) down
 
 infra:
-	docker compose up -d --wait postgres minio
+	$(COMPOSE) up -d --wait postgres minio
 
 reset-db:
 	@test "$(CONFIRM_RESET)" = "1" || (echo "Refusing destructive reset. Re-run with CONFIRM_RESET=1" >&2; exit 2)
-	docker compose down -v --remove-orphans
-	docker compose up -d --wait postgres minio
-	$(PYTHON) -m stockroom_crawler.cli init-db
+	$(COMPOSE) down
+	$(COMPOSE) up -d --wait postgres minio
+	$(COMPOSE) run --rm --build --no-deps crawler init-db
+	$(COMPOSE) run --rm --no-deps crawler bootstrap
+	$(COMPOSE) up -d --build --wait
 
-crawl-smoke: infra
-	CRAWL_MAX_PRODUCTS=3 CRAWL_MAX_CATEGORIES=1 $(PYTHON) -m stockroom_crawler.cli crawl
-	$(PYTHON) -m stockroom_crawler.cli stats
+crawl-smoke:
+	$(COMPOSE) run --rm --build -e CRAWL_MAX_PRODUCTS=3 -e CRAWL_MAX_CATEGORIES=1 crawler crawl
+	$(COMPOSE) run --rm crawler stats
 
-crawl: infra
-	$(PYTHON) -m stockroom_crawler.cli crawl
-	$(PYTHON) -m stockroom_crawler.cli stats
+crawl:
+	$(COMPOSE) run --rm --build crawler crawl
+	$(COMPOSE) run --rm crawler stats
 
 stats:
-	$(PYTHON) -m stockroom_crawler.cli stats
+	$(COMPOSE) run --rm crawler stats
 
 api:
-	docker compose up -d --build --wait api
+	$(COMPOSE) up -d --build --wait api
 
 health:
-	curl --fail --silent --show-error http://127.0.0.1:8080/healthz
+	$(COMPOSE) exec -T api wget -qO- http://127.0.0.1:8080/healthz
 
 mcp:
-	$(PYTHON) -m app.mcp_server.server
+	$(COMPOSE) exec -T shopping-mcp python -m app.mcp_server.server
 
 mcp-http:
-	$(PYTHON) -m app.mcp_server.server --transport streamable-http
+	$(COMPOSE) up -d --build --wait mcp shopping-mcp
 
 ollama-pull:
-	ollama pull "$${OLLAMA_MODEL:-qwen3:8b}"
+	$(COMPOSE) run --rm model-init
 
 chat:
-	$(PYTHON) -m app.chat_app.main
+	$(COMPOSE) up -d --build --wait chat
 
 chat-health:
-	curl --fail --silent --show-error "http://$${CHAT_HOST:-127.0.0.1}:$${CHAT_PORT:-3000}/healthz"
+	$(COMPOSE) exec -T chat python -c "import urllib.request; print(urllib.request.urlopen('http://127.0.0.1:3002/healthz').read().decode())"
 
 test-python:
-	$(PYTHON) -m pytest -q
+	$(COMPOSE) run --rm --build test-python python -m pytest -q --ignore=tests/test_stockroom_e2e.py --ignore=tests/test_chat_e2e.py
 
 test-go:
-	docker run --rm -v "$(CURDIR)/go-backend:/src" -w /src golang:1.26-alpine go test ./...
+	$(COMPOSE) run --rm --build test-go
 
 test: test-python test-go
 
 test-e2e:
-	STOCKROOM_E2E_URL=http://127.0.0.1:8080 $(PYTHON) -m pytest -q tests/test_stockroom_e2e.py
+	$(COMPOSE) run --rm --build test-python python -m pytest -q tests/test_stockroom_e2e.py
 
 test-chat-e2e:
-	STOCKROOM_CHAT_E2E_URL=http://127.0.0.1:3000 $(PYTHON) -m pytest -q tests/test_chat_e2e.py
+	$(COMPOSE) run --rm --build test-python python -m pytest -q tests/test_chat_e2e.py
+
+logs:
+	$(COMPOSE) logs -f model-init api chat

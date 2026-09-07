@@ -18,6 +18,8 @@ def build_parser() -> argparse.ArgumentParser:
     commands.add_parser("init-db", help="apply backend-ops/schema.sql (drops tables)")
     commands.add_parser("categories", help="list the top-level category whitelist")
     commands.add_parser("stats", help="row counts per table")
+    commands.add_parser("bootstrap", help="prepare schema and bucket without deleting data")
+    commands.add_parser("bootstrap-crawl", help="crawl once, recording successful completion")
 
     crawl = commands.add_parser("crawl", help="crawl and import products")
     crawl.add_argument("--category", help="restrict to one top-level slug")
@@ -47,6 +49,14 @@ def main(argv: list[str] | None = None) -> None:
         return
 
     settings = Settings.from_env()
+
+    if args.command in {"bootstrap", "bootstrap-crawl"}:
+        from stockroom_crawler import bootstrap
+        if args.command == "bootstrap":
+            bootstrap.prepare(settings)
+        else:
+            bootstrap.crawl_once(settings)
+        return
 
     if args.command == "init-db":
         connection = db.connect(settings.database_url)
@@ -94,6 +104,8 @@ def main(argv: list[str] | None = None) -> None:
         f"\n  Failed:          {summary.failed}"
         f"\n  Runtime:         {summary.runtime_seconds:.1f}s"
     )
+    if summary.failed or summary.products == 0:
+        raise SystemExit("Crawl incomplete; imported products retained. Check logs and retry.")
     if summary.per_category:
         print("\nPer category:")
         for slug, count in summary.per_category.items():

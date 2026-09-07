@@ -31,7 +31,7 @@ def apply_schema(connection: psycopg.Connection) -> None:
     ddl = SCHEMA_PATH.read_text(encoding="utf-8")
     with connection.cursor() as cur:
         cur.execute(
-            "DROP TABLE IF EXISTS order_items, orders, cart_items, product_sizes,"
+            "DROP TABLE IF EXISTS stockroom_bootstrap, order_items, orders, cart_items, product_sizes,"
             " product_images, products, categories, users CASCADE"
         )
         cur.execute(ddl)
@@ -101,14 +101,16 @@ def replace_sizes(
     product_id: int,
     sizes: list[tuple[str, str, int]],
 ) -> None:
-    """Set a product's variants to exactly `sizes` -- (label, sku_id, delta)."""
+    """Upsert variants, retaining IDs referenced by carts and order history."""
     with connection.cursor() as cur:
-        cur.execute("DELETE FROM product_sizes WHERE product_id = %s", (product_id,))
         cur.executemany(
             """
             INSERT INTO product_sizes
                 (product_id, size_name, source_sku_id, price_adjustment_jpy)
             VALUES (%s, %s, %s, %s)
+            ON CONFLICT (product_id, size_name) DO UPDATE
+            SET source_sku_id = EXCLUDED.source_sku_id,
+                price_adjustment_jpy = EXCLUDED.price_adjustment_jpy
             """,
             [(product_id, label, sku_id, delta) for label, sku_id, delta in sizes],
         )
@@ -122,6 +124,15 @@ def add_images(connection: psycopg.Connection, product_id: int, keys: list[str])
             ON CONFLICT (product_id, image_key) DO NOTHING
             """,
             [(product_id, key) for key in keys],
+        )
+
+
+def sync_images(connection: psycopg.Connection, product_id: int, keys: list[str]) -> None:
+    add_images(connection, product_id, keys)
+    with connection.cursor() as cur:
+        cur.execute(
+            "DELETE FROM product_images WHERE product_id = %s AND NOT (image_key = ANY(%s))",
+            (product_id, keys),
         )
 
 

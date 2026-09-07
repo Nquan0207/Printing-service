@@ -34,7 +34,7 @@ class CrawlSummary:
 
 
 def _fetch_variants(
-    client: HttpClient, product_id: str, sku_ids: list[str], wanted: int
+    client: HttpClient, product_id: str, sku_ids: list[str], wanted: int, strict: bool = False
 ) -> list[SkuVariant]:
     """Fetch SKU pages until `wanted` variants at distinct prices are collected.
 
@@ -51,6 +51,8 @@ def _fetch_variants(
                 f"https://stockroom.raksul.com/products/{product_id}?sku={sku_id}"
             )
         except Exception as exc:
+            if strict:
+                raise
             log.warning("Fetch failed for %s?sku=%s: %s", product_id, sku_id, exc)
             continue
         variant = parse_variant(html, product_id, sku_id)
@@ -66,6 +68,7 @@ def _store_images(
     product_id: str,
     variants: list[SkuVariant],
     limit: int,
+    strict: bool = False,
 ) -> list[str]:
     urls: list[str] = []
     for variant in variants:
@@ -80,12 +83,14 @@ def _store_images(
             body, content_type = client.get_bytes(url, delayed=False)
             keys.append(store.put(product_id, body, content_type))
         except Exception as exc:
+            if strict:
+                raise
             log.warning("Image fetch failed %s: %s", url, exc)
     return keys
 
 
 def _discover_products(
-    client: HttpClient, pages: list[str], needed: int, sizes_per_product: int
+    client: HttpClient, pages: list[str], needed: int, sizes_per_product: int, strict: bool = False
 ) -> dict[str, list[str]]:
     """Walk a category's subcategory pages until enough products are found."""
     collected: dict[str, list[str]] = {}
@@ -95,6 +100,8 @@ def _discover_products(
         try:
             html = client.get_text(page)
         except Exception as exc:
+            if strict:
+                raise
             log.warning("Category page failed %s: %s", page, exc)
             continue
         for product_id, skus in discovery.product_skus(html).items():
@@ -106,7 +113,7 @@ def _discover_products(
     return collected
 
 
-def run(settings: Settings, only_category: str | None = None) -> CrawlSummary:
+def run(settings: Settings, only_category: str | None = None, *, strict: bool = False) -> CrawlSummary:
     started = monotonic()
     summary = CrawlSummary()
     client = HttpClient(delay=settings.request_delay)
@@ -152,7 +159,7 @@ def run(settings: Settings, only_category: str | None = None) -> CrawlSummary:
 
             log.info("[%s] discovering up to %d products", slug, want)
             found = _discover_products(
-                client, pages, want, settings.sizes_per_product
+                client, pages, want, settings.sizes_per_product, strict
             )
             if not found:
                 continue
@@ -165,7 +172,7 @@ def run(settings: Settings, only_category: str | None = None) -> CrawlSummary:
                 if remaining <= 0:
                     break
                 variants = _fetch_variants(
-                    client, product_id, sku_ids, settings.sizes_per_product
+                    client, product_id, sku_ids, settings.sizes_per_product, strict
                 )
                 if len(variants) < settings.sizes_per_product:
                     summary.skipped_too_few_skus += 1
@@ -194,9 +201,9 @@ def run(settings: Settings, only_category: str | None = None) -> CrawlSummary:
                         ],
                     )
                     keys = _store_images(
-                        client, store, product_id, variants, settings.max_images
+                        client, store, product_id, variants, settings.max_images, strict
                     )
-                    db.add_images(connection, row_id, keys)
+                    db.sync_images(connection, row_id, keys)
                     connection.commit()
                 except Exception:
                     connection.rollback()

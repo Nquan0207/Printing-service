@@ -10,8 +10,11 @@ COPY . .
 # Static binary: the runtime image has no libc to link against.
 RUN CGO_ENABLED=0 GOOS=linux go build -trimpath -ldflags="-s -w" -o /out/api ./cmd/api
 
+FROM build AS test
+CMD ["go", "test", "./..."]
+
 # ---- runtime ----
-FROM alpine:3.22
+FROM alpine:3.22 AS runtime
 RUN apk add --no-cache ca-certificates wget \
     && adduser -D -u 10001 stockroom
 COPY --from=build /out/api /usr/local/bin/api

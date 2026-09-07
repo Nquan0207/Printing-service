@@ -112,6 +112,7 @@ def create_app(
             config.ollama_model,
             max_rounds=config.max_model_rounds,
             max_tool_calls=config.max_tool_calls,
+            timeout_seconds=config.ollama_timeout_seconds,
         )
         app.state.http = client
         app.state.sessions = store
@@ -300,16 +301,23 @@ def create_app(
 
     @app.get("/healthz")
     async def health(request: Request):
-        async def check(url: str):
+        async def check(url: str, model: str | None = None):
             try:
                 response = await request.app.state.http.get(url, timeout=3.0)
-                return "ok" if response.status_code == 200 else "error"
-            except httpx.RequestError:
+                if response.status_code != 200:
+                    return "error"
+                if model is not None:
+                    models = response.json().get("models", [])
+                    expected = model if ":" in model else model + ":latest"
+                    if not any(item.get("name") == expected for item in models):
+                        return "model_missing"
+                return "ok"
+            except (httpx.RequestError, ValueError, TypeError, AttributeError):
                 return "error"
 
         stockroom, ollama = await asyncio.gather(
             check(f"{config.stockroom_api_url}/healthz"),
-            check(f"{config.ollama_url}/api/tags"),
+            check(f"{config.ollama_url}/api/tags", config.ollama_model),
         )
         status = "ok" if stockroom == ollama == "ok" else "degraded"
         return JSONResponse(

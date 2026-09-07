@@ -1,3 +1,30 @@
+x-storage-env: &storage-env
+  STOCKROOM_DATABASE_URL: postgresql://raksul:raksul_password@postgres:5432/stockroom
+  MINIO_ENDPOINT: minio:9000
+  MINIO_ACCESS_KEY: minioadmin
+  MINIO_SECRET_KEY: minioadmin
+  MINIO_BUCKET: stockroom-media
+  MINIO_SECURE: "false"
+
+x-crawler: &crawler
+  build:
+    context: .
+    dockerfile: crawler/Dockerfile
+  environment: &crawler-env
+    <<: *storage-env
+    CRAWL_MAX_PRODUCTS: "${CRAWL_MAX_PRODUCTS:-70}"
+    CRAWL_MAX_CATEGORIES: "${CRAWL_MAX_CATEGORIES:-8}"
+    CRAWL_CATEGORIES: "${CRAWL_CATEGORIES:-}"
+    CRAWL_SIZES_PER_PRODUCT: "${CRAWL_SIZES_PER_PRODUCT:-3}"
+    CRAWL_MAX_IMAGES: "${CRAWL_MAX_IMAGES:-3}"
+    CRAWL_REQUEST_DELAY: "${CRAWL_REQUEST_DELAY:-1.25}"
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: docker/app.Dockerfile
+    target: runtime
+
 services:
   postgres:
     image: postgres:17
@@ -5,18 +32,14 @@ services:
       POSTGRES_DB: stockroom
       POSTGRES_USER: raksul
       POSTGRES_PASSWORD: raksul_password
-    ports:
-      - "127.0.0.1:5432:5432"
-    volumes:
-      - raksul_postgres_data:/var/lib/postgresql/data
+    ports: ["127.0.0.1:${POSTGRES_HOST_PORT:-5432}:5432"]
+    volumes: ["raksul_postgres_data:/var/lib/postgresql/data"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U raksul -d stockroom"]
+      test: [CMD-SHELL, "pg_isready -U raksul -d stockroom"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  # Product image objects for the stockroom PoC. Loopback only, no public
-  # bucket policy -- the Go service is the only reader, via GET /media/{key}.
   minio:
     image: minio/minio:latest
     command: server /data --console-address ":9001"
@@ -24,100 +47,139 @@ services:
       MINIO_ROOT_USER: minioadmin
       MINIO_ROOT_PASSWORD: minioadmin
     ports:
-      - "127.0.0.1:9000:9000"   # S3 API
-      - "127.0.0.1:9001:9001"   # web console
-    volumes:
-      - raksul_minio_data:/data
+      - "127.0.0.1:${MINIO_HOST_PORT:-9000}:9000"
+      - "127.0.0.1:${MINIO_CONSOLE_HOST_PORT:-9001}:9001"
+    volumes: ["raksul_minio_data:/data"]
     healthcheck:
-      test: ["CMD-SHELL", "mc ready local || exit 1"]
+      test: [CMD-SHELL, "mc ready local || exit 1"]
       interval: 5s
       timeout: 5s
       retries: 10
 
-  # Go API. Inside the container it binds 0.0.0.0 so Docker can reach it, but
-  # the published port is scoped to 127.0.0.1 -- so the service is still
-  # unreachable from outside this machine, which is what the contract's
-  # loopback-only requirement actually means.
   api:
-    build: ./backend-ops
+    build:
+      context: ./backend-ops
+      target: runtime
     depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
+      postgres: {condition: service_healthy}
+      minio: {condition: service_healthy}
     environment:
-      STOCKROOM_ADDR: "0.0.0.0:8080"
-      # Gates the customer-facing shop. Flip with SHOP_ENABLED=false in the
-      # host environment, then `docker compose up -d api` -- no rebuild.
+      <<: *storage-env
+      STOCKROOM_ADDR: 0.0.0.0:8080
       SHOP_ENABLED: "${SHOP_ENABLED:-true}"
-      # debug also logs /healthz and /media, which are filtered at info.
       STOCKROOM_LOG_LEVEL: "${STOCKROOM_LOG_LEVEL:-info}"
-      # "*" allows any origin. Safe only while the port is loopback-bound.
       STOCKROOM_CORS_ORIGIN: "${STOCKROOM_CORS_ORIGIN:-*}"
       STOCKROOM_ADMIN_EMAILS: "${STOCKROOM_ADMIN_EMAILS:-admin@stockroom.local}"
-      STOCKROOM_DATABASE_URL: "postgresql://raksul:raksul_password@postgres:5432/stockroom"
-      MINIO_ENDPOINT: "minio:9000"
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: stockroom-media
-      MINIO_SECURE: "false"
-    ports:
-      - "127.0.0.1:8080:8080"
+    ports: ["127.0.0.1:${API_HOST_PORT:-8080}:8080"]
     restart: unless-stopped
 
-  # SPA served by nginx, which also reverse-proxies /api and /media to the api
-  # service so the browser sees one origin (no CORS, and the relative /media
-  # paths in product responses resolve unchanged).
   web:
     build: ./frontend-ops
     depends_on:
-      api:
-        condition: service_healthy
-    ports:
-      - "127.0.0.1:3000:8080"
+      api: {condition: service_healthy}
+    ports: ["127.0.0.1:${WEB_HOST_PORT:-3000}:8080"]
     restart: unless-stopped
 
-  # MCP Apps server (Python). Read-only admin ops tools + ui:// Views that a
-  # host renders in a sandboxed iframe. Talks to `api` over HTTP; never to
-  # Postgres or MinIO directly.
   mcp:
+    container_name: "${ADMIN_MCP_CONTAINER_NAME:-stockroom-admin-mcp}"
     build: ./mcp-ops
     depends_on:
-      api:
-        condition: service_healthy
+      api: {condition: service_healthy}
     environment:
-      MCP_HOST: "0.0.0.0"
+      MCP_HOST: 0.0.0.0
       MCP_PORT: "3001"
-      STOCKROOM_API_BASE: "http://api:8080"
+      STOCKROOM_API_BASE: http://api:8080
+      STOCKROOM_PUBLIC_API_BASE: "http://127.0.0.1:${API_HOST_PORT:-8080}"
       STOCKROOM_ADMIN_EMAIL: "${STOCKROOM_ADMIN_EMAIL:-admin@stockroom.local}"
-    ports:
-      - "127.0.0.1:3001:3001"
+    ports: ["127.0.0.1:${MCP_HOST_PORT:-3001}:3001"]
     restart: unless-stopped
 
-  # One-shot tool, not a service -- `profiles` keeps `docker compose up` from
-  # starting it. Run it explicitly:
-  #   docker compose run --rm crawler init-db
-  #   docker compose run --rm crawler crawl
+  shopping-mcp:
+    <<: *app
+    container_name: "${SHOPPING_MCP_CONTAINER_NAME:-stockroom-shopping-mcp}"
+    command: [python, -m, app.mcp_server.server, --transport, streamable-http]
+    depends_on:
+      api: {condition: service_healthy}
+    environment:
+      STOCKROOM_API_URL: http://api:8080
+      STOCKROOM_PUBLIC_ASSET_URL: "http://127.0.0.1:${API_HOST_PORT:-8080}"
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "3003"
+    ports: ["127.0.0.1:${SHOPPING_MCP_HOST_PORT:-3003}:3003"]
+    healthcheck:
+      test: [CMD, python, -c, "import socket; socket.create_connection(('127.0.0.1',3003),2).close()"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  ollama:
+    image: ollama/ollama:latest
+    volumes: ["ollama_data:/root/.ollama"]
+    healthcheck:
+      test: [CMD, ollama, list]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  model-init:
+    image: ollama/ollama:latest
+    entrypoint: [/bin/sh, /model-init.sh]
+    volumes: ["./docker/model-init.sh:/model-init.sh:ro"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen3:8b}"
+    depends_on:
+      ollama: {condition: service_healthy}
+
+  chat:
+    <<: *app
+    depends_on:
+      api: {condition: service_healthy}
+      model-init: {condition: service_completed_successfully}
+    environment:
+      STOCKROOM_RUNTIME: docker
+      STOCKROOM_API_URL: http://api:8080
+      STOCKROOM_PUBLIC_ASSET_URL: "http://127.0.0.1:${API_HOST_PORT:-8080}"
+      OLLAMA_URL: http://ollama:11434
+      OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen3:8b}"
+      CHAT_HOST: 0.0.0.0
+      CHAT_PORT: "3002"
+      OLLAMA_TIMEOUT_SECONDS: "${OLLAMA_TIMEOUT_SECONDS:-600}"
+      CHAT_SESSION_TTL_SECONDS: "${CHAT_SESSION_TTL_SECONDS:-86400}"
+    ports: ["127.0.0.1:${CHAT_HOST_PORT:-3002}:3002"]
+    healthcheck:
+      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3002/healthz',timeout=8)"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+    restart: unless-stopped
+
   crawler:
+    <<: *crawler
+    profiles: [tools]
+    depends_on:
+      postgres: {condition: service_healthy}
+      minio: {condition: service_healthy}
+
+  test-python:
     build:
       context: .
-      dockerfile: crawler/Dockerfile
-    profiles: ["tools"]
-    depends_on:
-      postgres:
-        condition: service_healthy
-      minio:
-        condition: service_healthy
+      dockerfile: docker/app.Dockerfile
+      target: test
+    profiles: [test]
     environment:
-      STOCKROOM_DATABASE_URL: "postgresql://raksul:raksul_password@postgres:5432/stockroom"
-      MINIO_ENDPOINT: "minio:9000"
-      MINIO_ACCESS_KEY: minioadmin
-      MINIO_SECRET_KEY: minioadmin
-      MINIO_BUCKET: stockroom-media
-      MINIO_SECURE: "false"
-      CRAWL_MAX_PRODUCTS: "${CRAWL_MAX_PRODUCTS:-70}"
-      CRAWL_MAX_CATEGORIES: "${CRAWL_MAX_CATEGORIES:-8}"
+      STOCKROOM_E2E_URL: http://api:8080
+      STOCKROOM_CHAT_E2E_URL: http://chat:3002
+
+  test-go:
+    build:
+      context: ./backend-ops
+      target: test
+    profiles: [test]
 
 volumes:
   raksul_postgres_data:
   raksul_minio_data:
+  ollama_data:

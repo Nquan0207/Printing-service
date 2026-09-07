@@ -1,3 +1,21 @@
+## Run with Docker (partner setup)
+
+From the repository root, `docker compose up -d --build --wait` starts services
+using existing data. Schema preparation and crawling are manual only. For a new
+empty installation, run `docker compose run --rm --build crawler bootstrap` first.
+
+```bash
+docker compose run --rm crawler stats
+docker compose run --rm crawler crawl
+```
+
+`crawler init-db` is destructive; the manual `crawler bootstrap` command prepares
+a new schema and bucket without dropping existing data. For a deliberate reset, use `make reset-db CONFIRM_RESET=1`.
+The instructions below are optional **native development** instructions, not
+requirements for Docker users. Native settings are in `crawler/.env.example`.
+
+---
+
 # Stockroom Crawler
 
 A standalone service that crawls [stockroom.raksul.com](https://stockroom.raksul.com)

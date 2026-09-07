@@ -102,3 +102,26 @@
 2026-09-04 22:17:33 | SUCCESS  | LibrarianDaemon finished.
 2026-09-04 22:17:33 | INFO     | BroadcastListener shutdown
 2026-09-04 22:17:34 | SUCCESS  | Goodbye.
+2026-09-07 11:55:42 | WARNING  | Cannot detect or read from CBR archives
+2026-09-07 11:55:42 | INFO     | Starting Codex v2.2.11
+2026-09-07 11:55:42 | INFO     | Ensuring database is correct and up to date...
+2026-09-07 11:55:43 | SUCCESS  | Database ready.
+2026-09-07 11:55:44 | INFO     | Created 0 missing auth tokens for users.
+2026-09-07 11:55:44 | INFO     | Codex is being served without a url path prefix.
+2026-09-07 11:55:44 | SUCCESS  | Running Codex v2.2.11
+2026-09-07 11:55:44 | SUCCESS  | BroadcastListener started.
+2026-09-07 11:55:46 | WARNING  | Cannot detect or read from CBR archives
+2026-09-07 11:55:48 | WARNING  | Cannot detect or read from CBR archives
+2026-09-07 11:55:50 | WARNING  | Cannot detect or read from CBR archives
+2026-09-07 11:55:52 | WARNING  | Cannot detect or read from CBR archives
+2026-09-07 11:55:54 | WARNING  | Cannot detect or read from CBR archives
+2026-09-07 11:55:54 | INFO     | LibrarianDaemon started all threads.
+2026-09-07 11:55:54 | SUCCESS  | LibrarianDaemon ready for tasks.
+2026-09-07 11:55:54 | INFO     | Looking for search entries to update since the fracturing of the multiverse...
+2026-09-07 11:55:54 | INFO     | Looking for missing search entries to create...
+2026-09-07 11:55:54 | SUCCESS  | Search index found to be already synced in a moment.
+2026-09-07 11:56:02 | INFO     | Asking granian to shut down gracefully. Could take 10 seconds...
+2026-09-07 11:56:02 | INFO     | LibrarianDaemon joined all threads.
+2026-09-07 11:56:02 | SUCCESS  | LibrarianDaemon finished.
+2026-09-07 11:56:02 | INFO     | BroadcastListener shutdown
+2026-09-07 11:56:03 | SUCCESS  | Goodbye.
