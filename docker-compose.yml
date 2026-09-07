@@ -122,6 +122,7 @@ services:
       timeout: 5s
       retries: 20
     restart: unless-stopped
+    profiles: [docker-ollama]
 
   model-init:
     image: ollama/ollama:latest
@@ -131,18 +132,19 @@ services:
       OLLAMA_HOST: http://ollama:11434
       OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen3:8b}"
     depends_on:
-      ollama: {condition: service_healthy}
+      api:
+        condition: service_healthy
+    profiles: [docker-ollama]
 
   chat:
     <<: *app
     depends_on:
       api: {condition: service_healthy}
-      model-init: {condition: service_completed_successfully}
     environment:
       STOCKROOM_RUNTIME: docker
       STOCKROOM_API_URL: http://api:8080
       STOCKROOM_PUBLIC_ASSET_URL: "http://127.0.0.1:${API_HOST_PORT:-8080}"
-      OLLAMA_URL: http://ollama:11434
+      OLLAMA_URL: http://host.docker.internal:11434
       OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen3:8b}"
       CHAT_HOST: 0.0.0.0
       CHAT_PORT: "3002"

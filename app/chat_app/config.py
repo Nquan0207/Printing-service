@@ -16,6 +16,8 @@ def _local_url(name: str, value: str) -> str:
     allowed = {"127.0.0.1", "localhost", "::1"}
     if os.getenv("STOCKROOM_RUNTIME") == "docker":
         allowed.add({"STOCKROOM_API_URL": "api", "OLLAMA_URL": "ollama"}[name])
+    if name == "OLLAMA_URL":
+        allowed.add("host.docker.internal")
     if parsed.scheme not in {"http", "https"} or parsed.hostname not in allowed:
         raise ValueError(f"{name} must use a loopback HTTP(S) URL")
     return value.rstrip("/")
