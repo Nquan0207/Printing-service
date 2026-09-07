@@ -16,22 +16,26 @@ stockroom.raksul.com
         ▲
         │  backend-ops/ (Go)  — the only process touching SQL or MinIO
         │
-   ┌────┼─────────────────────┬──────────────────────┐
-   │    │                     │                      │
-frontend-ops/         mcp-ops/ (Python)      app/chat_app/ (Python)
- (React, nginx)     read-only admin tools    Ollama host + shopping MCP
-                             │                        │
-                    Claude Desktop / hosts      chat-ui/ (React, nginx)
+   ┌────┼──────────────┬───────────────┐
+   │    │              │               │
+frontend-ops/    mcp-ops/        mcp-shop/  ← one shared commerce MCP
+ (React,nginx)  admin MCP       commerce MCP
+                     │           │        │
+              Claude Desktop     │   chat-host/ (Ollama host)
+                / ChatGPT ───────┘        │
+                                    chat-ui/ (React, nginx)
 ```
 
 The crawler is an offline import step. At request time the MCP server only calls
 the Go API — it never reaches the supplier's website and never runs SQL. Checkout
 is simulated; no money moves.
 
-Both the admin MCP (`mcp-ops/`) and the shopping MCP/chat (`app/`) run in Docker.
-They share the Go backend and retain their separate tool sets. The chat's own
-browser UI is a separate React service, [chat-ui/](chat-ui/), which proxies to
-the chat backend the same way `web` proxies to `api`.
+Two MCP servers run in Docker and share the Go backend, with separate tool sets:
+[mcp-ops/](mcp-ops/) is read-only admin, [mcp-shop/](mcp-shop/) is commerce with a
+confirm-gated checkout. [chat-host/](chat-host/) is an MCP *host* — it runs the
+local model and is an ordinary client of `mcp-shop`, the same server Claude
+Desktop connects to. Its browser UI is [chat-ui/](chat-ui/), which proxies to it
+the way `web` proxies to `api`.
 
 | Where to look | For |
 |---|---|
@@ -40,6 +44,8 @@ the chat backend the same way `web` proxies to `api`.
 | [docs/api-contract.md](docs/api-contract.md) | The Go ↔ MCP interface, and why it is shaped that way |
 | [crawler/README.md](crawler/README.md) | The crawler on its own |
 | [chat-ui/README.md](chat-ui/README.md) | The chat SPA, its nginx proxy and chat history |
+| [mcp-shop/README.md](mcp-shop/README.md) | The commerce MCP server, its View and the confirm gate |
+| [chat-host/README.md](chat-host/README.md) | The Ollama host and how it talks to the MCP server |
 | [CLAUDE.md](CLAUDE.md) | Working on the code: layout, invariants, gotchas |
 
 ---
@@ -73,7 +79,7 @@ docker compose up -d --build --wait mcp shopping-mcp
 | `mcp` | http://127.0.0.1:3001/mcp | Read-only admin MCP |
 | `chat-ui` | http://127.0.0.1:3004 | Shopping chat UI (React) — **open this one** |
 | `chat` | http://127.0.0.1:3002 | Chat backend: JSON and the SSE stream, no HTML |
-| `shopping-mcp` | http://127.0.0.1:3003/mcp | Shopping MCP, including confirmation-gated checkout |
+| `shopping-mcp` | http://127.0.0.1:3003/mcp | Commerce MCP ([mcp-shop/](mcp-shop/)), confirm-gated checkout |
 | `postgres` | 127.0.0.1:5432 | Database `stockroom`, user `raksul`, password `raksul_password` |
 | `minio` | http://127.0.0.1:9001 | Console, `minioadmin` / `minioadmin` |
 
@@ -188,7 +194,7 @@ For shopping tools, add a second entry:
   "mcpServers": {
     "raksul_catalog": {
       "command": "docker",
-      "args": ["exec", "-i", "stockroom-shopping-mcp", "python", "-m", "app.mcp_server.server"]
+      "args": ["exec", "-i", "stockroom-shopping-mcp", "python", "-m", "stockroom_shop.server"]
     }
   }
 }

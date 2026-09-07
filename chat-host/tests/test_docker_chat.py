@@ -2,8 +2,8 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from app.chat_app.config import ChatSettings, _local_url
-from app.chat_app.main import create_app
+from stockroom_chat.config import ChatSettings, _local_url
+from stockroom_chat.main import create_app
 
 
 def test_docker_allows_only_expected_service_names(monkeypatch):

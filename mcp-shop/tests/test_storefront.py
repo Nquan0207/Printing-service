@@ -1,8 +1,8 @@
 from datetime import timedelta
 
-from app.mcp_server import tools as handlers
-from app.mcp_server.server import mcp
-from app.mcp_server.storefront_widget import STOREFRONT_HTML, STOREFRONT_URI
+from stockroom_shop import tools as handlers
+from stockroom_shop.server import mcp
+from stockroom_shop.storefront_widget import STOREFRONT_HTML, STOREFRONT_URI
 
 
 class FakeClient:

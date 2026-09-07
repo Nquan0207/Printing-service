@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 import secrets
 from typing import Any, Callable
 
-from app.chat_app.mcp_client import StockroomMCPConnection
+from stockroom_chat.mcp_client import StockroomMCPConnection
 
 
 def utcnow() -> datetime:
@@ -122,14 +122,12 @@ class SessionStore:
     def __init__(
         self,
         *,
-        project_root,
-        api_url: str,
+        mcp_url: str,
         ttl_seconds: int,
         max_sessions: int = 20,
         mcp_factory: Callable[..., Any] = StockroomMCPConnection,
     ):
-        self.project_root = project_root
-        self.api_url = api_url
+        self.mcp_url = mcp_url
         self.ttl = timedelta(seconds=ttl_seconds)
         self.max_sessions = max_sessions
         self.mcp_factory = mcp_factory
@@ -141,7 +139,7 @@ class SessionStore:
         async with self._lock:
             if len(self._sessions) >= self.max_sessions:
                 raise RuntimeError("Too many active chat sessions. Log out an old session and retry.")
-        mcp = self.mcp_factory(self.project_root, self.api_url)
+        mcp = self.mcp_factory(self.mcp_url)
         await mcp.start()
         now = utcnow()
         state = ChatSession(secrets.token_urlsafe(32), mcp, now, now)

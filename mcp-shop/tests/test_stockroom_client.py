@@ -1,6 +1,6 @@
 import requests
 
-from app.mcp_server.stockroom_client import StockroomAPIError, StockroomClient
+from stockroom_shop.stockroom_client import StockroomAPIError, StockroomClient
 
 
 class Response:

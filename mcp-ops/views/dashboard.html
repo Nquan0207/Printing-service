@@ -2,76 +2,14 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
     <title>Stockroom dashboard</title>
     <style>
-      :root { color-scheme: light dark; --ink:#1f2933; --dim:#6b7684; --line:#e6e9ee;
-              --card:#fff; --bg:#f7f8fa; --brand:#ef1f1f; }
-      @media (prefers-color-scheme: dark) {
-        :root { --ink:#e8eaed; --dim:#9aa4b2; --line:#2b3138; --card:#1b1f24; --bg:#14171a; }
-      }
-      * { box-sizing: border-box; }
-      body { margin:0; padding:16px; background:var(--bg); color:var(--ink);
-             font:13px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI",
-                  "Hiragino Sans","Noto Sans JP",sans-serif; }
-      h1 { font-size:15px; margin:0 0 2px; }
-      .sub { color:var(--dim); font-size:11px; margin:0 0 14px; }
-      .range { display:flex; gap:4px; margin-bottom:14px; }
-      .range button { border:1px solid var(--line); background:var(--card); color:var(--dim);
-                      border-radius:7px; padding:4px 11px; font:inherit; cursor:pointer; }
-      .range button[aria-pressed="true"] { border-color:var(--brand); color:var(--brand); font-weight:600; }
-      .tiles { display:grid; grid-template-columns:repeat(auto-fit,minmax(132px,1fr)); gap:10px; }
-      .tile { background:var(--card); border:1px solid var(--line); border-radius:9px; padding:11px; }
-      .tile .lbl { font-size:10px; text-transform:uppercase; letter-spacing:.05em; color:var(--dim); }
-      .tile .val { font-size:20px; font-weight:700; margin-top:2px; }
-      .tile .hint { font-size:10px; color:var(--dim); margin-top:1px; }
-      .err { background:#fdecea; color:#b3261e; border-radius:8px; padding:10px; font-size:12px; }
-      @media (prefers-color-scheme: dark) { .err { background:#3a1c1a; color:#f2b8b5; } }
-      .muted { color:var(--dim); }
-
-      /* charts */
-      .grids { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr));
-               gap:10px; margin-top:12px; }
-      .chart { background:var(--card); border:1px solid var(--line);
-               border-radius:9px; padding:11px 12px 6px; }
-      .chart .lbl { font-size:10px; text-transform:uppercase; letter-spacing:.05em;
-                    color:var(--dim); margin-bottom:6px; }
-      .svg { width:100%; height:auto; display:block; overflow:visible; }
-      .grid { stroke:var(--line); stroke-width:1; stroke-dasharray:3 3; }
-      .axis { fill:var(--dim); font-size:9px; }
-      .line { stroke:var(--brand); stroke-width:2; stroke-linejoin:round; }
-      .area { fill:var(--brand); opacity:.13; }
-      .bar { fill:#6b8afd; }
-      .bar.ok { fill:#12b5a5; }
-      .bar.warn { fill:#f0a500; }
-      circle:hover { fill:rgba(239,31,31,.25); }
-      rect[fill="transparent"]:hover { fill:rgba(127,127,127,.10); }
-
-      .rows { display:flex; flex-direction:column; gap:5px; padding-bottom:6px; }
-      .row { display:grid; grid-template-columns:minmax(0,168px) 1fr 40px;
-             gap:8px; align-items:center; font-size:11px; }
-      .row .name { color:var(--dim); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-      .row .track { background:var(--bg); border-radius:3px; height:14px; overflow:hidden; }
-      .row .fill { display:block; height:100%; background:#6b8afd; border-radius:3px; }
-      .row .val { text-align:right; font-variant-numeric:tabular-nums; }
-
-      table { border-collapse:collapse; width:100%; }
-      th { text-align:left; font-size:10px; text-transform:uppercase; letter-spacing:.05em;
-           color:var(--dim); font-weight:600; padding:6px 8px; border-bottom:1px solid var(--line); }
-      td { padding:6px 8px; border-bottom:1px solid var(--line); font-size:11px; }
-      tr:last-child td { border-bottom:0; }
-      .num { text-align:right; font-variant-numeric:tabular-nums; }
+      body { margin: 0; }
     </style>
   </head>
   <body>
-    <h1>Stockroom operations</h1>
-    <p class="sub" id="sub">Loading…</p>
-    <div class="range" id="range" hidden>
-      <button data-days="7">7d</button>
-      <button data-days="14">14d</button>
-      <button data-days="30">30d</button>
-      <button data-days="90">90d</button>
-    </div>
-    <div id="out"></div>
-    <script type="module" src="/src/dashboard.ts"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/entries/dashboard.tsx"></script>
   </body>
 </html>

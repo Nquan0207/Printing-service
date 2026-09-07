@@ -1,11 +1,15 @@
 <!doctype html>
 <html lang="en">
-  <head><meta charset="UTF-8" /><title>Orders</title></head>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Orders</title>
+    <style>
+      body { margin: 0; }
+    </style>
+  </head>
   <body>
-    <h1>Orders</h1>
-    <p class="sub" id="sub">Loading…</p>
-    <div class="bar" id="bar" hidden></div>
-    <div id="out"></div>
-    <script type="module" src="/src/orders.ts"></script>
+    <div id="root"></div>
+    <script type="module" src="/src/entries/orders.tsx"></script>
   </body>
 </html>

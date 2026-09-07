@@ -1,14 +1,11 @@
 from __future__ import annotations
 
-import json
-import os
-from pathlib import Path
-import sys
-from typing import Any
 import asyncio
+import json
+from typing import Any
 
-from mcp import ClientSession, StdioServerParameters
-from mcp.client.stdio import stdio_client
+from mcp import ClientSession
+from mcp.client.streamable_http import streamablehttp_client
 
 
 MODEL_BLOCKED_TOOLS = {"mock_sign_in", "open_storefront", "place_order"}
@@ -51,9 +48,20 @@ def result_payload(result: Any) -> dict[str, Any]:
 
 
 class StockroomMCPConnection:
-    def __init__(self, project_root: Path, api_url: str):
-        self.project_root = project_root
-        self.api_url = api_url
+    """One MCP session against the shared commerce server (`mcp-shop`).
+
+    This used to spawn `python -m stockroom_shop.server` over stdio, one
+    subprocess per browser session. It now connects over streamable-http to the
+    same running server Claude Desktop and ChatGPT use, so there is one MCP
+    server rather than one per chat session plus a service nobody called.
+
+    Commands are still funnelled through a single worker task: the MCP client
+    session is not safe to drive from several tasks at once, and the async
+    context managers must be entered and exited on the same task.
+    """
+
+    def __init__(self, mcp_url: str):
+        self.mcp_url = mcp_url
         self._commands: asyncio.Queue[Any] = asyncio.Queue()
         self._worker_task: asyncio.Task | None = None
         self._ready: asyncio.Future | None = None
@@ -69,18 +77,10 @@ class StockroomMCPConnection:
         await self._ready
 
     async def _run(self) -> None:
-        environment = os.environ.copy()
-        environment["PYTHONPATH"] = str(self.project_root)
-        environment["STOCKROOM_API_URL"] = self.api_url
-        params = StdioServerParameters(
-            command=sys.executable,
-            args=["-m", "app.mcp_server.server"],
-            cwd=str(self.project_root),
-            env=environment,
-        )
         try:
-            async with stdio_client(params) as streams:
-                async with ClientSession(*streams) as session:
+            # The third yielded value is a session-id callback we do not need.
+            async with streamablehttp_client(self.mcp_url) as (read, write, _):
+                async with ClientSession(read, write) as session:
                     await session.initialize()
                     listed = await session.list_tools()
                     self.model_tools = ollama_tools(listed.tools)

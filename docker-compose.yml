@@ -19,12 +19,6 @@ x-crawler: &crawler
     CRAWL_MAX_IMAGES: "${CRAWL_MAX_IMAGES:-3}"
     CRAWL_REQUEST_DELAY: "${CRAWL_REQUEST_DELAY:-1.25}"
 
-x-app: &app
-  build:
-    context: .
-    dockerfile: docker/app.Dockerfile
-    target: runtime
-
 services:
   postgres:
     image: postgres:17
@@ -94,23 +88,18 @@ services:
     ports: ["127.0.0.1:${MCP_HOST_PORT:-3001}:3001"]
     restart: unless-stopped
 
+  # Commerce MCP server: one shared instance for every host that wants it --
+  # the chat below, Claude Desktop, ChatGPT. Sibling of `mcp`, which is the
+  # read-only admin server.
   shopping-mcp:
-    <<: *app
+    build: ./mcp-shop
     container_name: "${SHOPPING_MCP_CONTAINER_NAME:-stockroom-shopping-mcp}"
-    command: [python, -m, app.mcp_server.server, --transport, streamable-http]
     depends_on:
       api: {condition: service_healthy}
     environment:
       STOCKROOM_API_URL: http://api:8080
       STOCKROOM_PUBLIC_ASSET_URL: "http://127.0.0.1:${API_HOST_PORT:-8080}"
-      MCP_HOST: 0.0.0.0
-      MCP_PORT: "3003"
     ports: ["127.0.0.1:${SHOPPING_MCP_HOST_PORT:-3003}:3003"]
-    healthcheck:
-      test: [CMD, python, -c, "import socket; socket.create_connection(('127.0.0.1',3003),2).close()"]
-      interval: 10s
-      timeout: 3s
-      retries: 10
     restart: unless-stopped
 
   ollama:
@@ -133,27 +122,22 @@ services:
     depends_on:
       ollama: {condition: service_healthy}
 
+  # MCP *host*: owns the model loop and the browser session, and is an ordinary
+  # client of shopping-mcp. It no longer spawns an MCP server of its own.
   chat:
-    <<: *app
+    build: ./chat-host
     depends_on:
       api: {condition: service_healthy}
+      shopping-mcp: {condition: service_healthy}
       model-init: {condition: service_completed_successfully}
     environment:
-      STOCKROOM_RUNTIME: docker
       STOCKROOM_API_URL: http://api:8080
-      STOCKROOM_PUBLIC_ASSET_URL: "http://127.0.0.1:${API_HOST_PORT:-8080}"
+      SHOPPING_MCP_URL: http://shopping-mcp:3003
       OLLAMA_URL: http://ollama:11434
       OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen3:8b}"
-      CHAT_HOST: 0.0.0.0
-      CHAT_PORT: "3002"
       OLLAMA_TIMEOUT_SECONDS: "${OLLAMA_TIMEOUT_SECONDS:-600}"
       CHAT_SESSION_TTL_SECONDS: "${CHAT_SESSION_TTL_SECONDS:-86400}"
     ports: ["127.0.0.1:${CHAT_HOST_PORT:-3002}:3002"]
-    healthcheck:
-      test: [CMD, python, -c, "import urllib.request; urllib.request.urlopen('http://127.0.0.1:3002/healthz',timeout=8)"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
     restart: unless-stopped
 
   # React SPA for the Ollama chat, served by nginx which reverse-proxies /api,
@@ -173,15 +157,35 @@ services:
       postgres: {condition: service_healthy}
       minio: {condition: service_healthy}
 
+  # Unit suites live with their service; this one runs only the cross-service
+  # end-to-end checks against a stack that is already up.
   test-python:
     build:
       context: .
-      dockerfile: docker/app.Dockerfile
-      target: test
+      dockerfile: docker/e2e.Dockerfile
     profiles: [test]
     environment:
       STOCKROOM_E2E_URL: http://api:8080
       STOCKROOM_CHAT_E2E_URL: http://chat:3002
+      SHOPPING_MCP_E2E_URL: http://shopping-mcp:3003/mcp
+
+  test-mcp-shop:
+    build:
+      context: ./mcp-shop
+      dockerfile: Dockerfile.test
+    profiles: [test]
+
+  test-chat-host:
+    build:
+      context: ./chat-host
+      dockerfile: Dockerfile.test
+    profiles: [test]
+
+  test-crawler:
+    build:
+      context: .
+      dockerfile: crawler/Dockerfile.test
+    profiles: [test]
 
   test-go:
     build:

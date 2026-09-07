@@ -13,11 +13,11 @@ import httpx
 from pydantic import BaseModel, Field
 import uvicorn
 
-from app.chat_app.config import ChatSettings
-from app.chat_app.history import ChatHistory, model_messages
-from app.chat_app.mcp_client import StockroomMCPConnection
-from app.chat_app.ollama_agent import OllamaAgent
-from app.chat_app.sessions import SYSTEM_PROMPT, ChatSession, SessionStore, public_payload
+from stockroom_chat.config import ChatSettings
+from stockroom_chat.history import ChatHistory, model_messages
+from stockroom_chat.mcp_client import StockroomMCPConnection
+from stockroom_chat.ollama_agent import OllamaAgent
+from stockroom_chat.sessions import SYSTEM_PROMPT, ChatSession, SessionStore, public_payload
 
 
 COOKIE_NAME = "stockroom_chat_session"
@@ -99,8 +99,7 @@ def create_app(
             timeout=httpx.Timeout(30.0, connect=5.0), follow_redirects=False
         )
         store = session_store or SessionStore(
-            project_root=config.project_root,
-            api_url=config.stockroom_api_url,
+            mcp_url=config.shopping_mcp_url,
             ttl_seconds=config.session_ttl_seconds,
             max_sessions=config.max_sessions,
             mcp_factory=mcp_factory,

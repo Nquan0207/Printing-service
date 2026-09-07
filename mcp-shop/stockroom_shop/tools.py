@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
-from app.mcp_server.stockroom_client import StockroomAPIError, StockroomClient
+from stockroom_shop.stockroom_client import StockroomAPIError, StockroomClient
 
 SCOPE = {"data_source": "stockroom_postgresql_via_go_api", "real_time": False, "mock_checkout": True}
 

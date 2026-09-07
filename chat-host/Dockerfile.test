@@ -1,0 +1,9 @@
+FROM python:3.13-slim
+WORKDIR /app
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt pytest
+COPY stockroom_chat ./stockroom_chat
+COPY tests ./tests
+COPY pyproject.toml ./
+ENV PYTEST_ADDOPTS="-o cache_dir=/tmp/pytest-cache"
+CMD ["python", "-m", "pytest", "-q"]

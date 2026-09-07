@@ -1,0 +1,27 @@
+{
+  "name": "stockroom-shop-views",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "vite build",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@vitejs/plugin-react": "^5.0.4",
+    "postcss": "^8.5.28",
+    "postcss-preset-mantine": "^1.18.0",
+    "typescript": "^5.9.3",
+    "vite": "^7.1.7",
+    "vite-plugin-singlefile": "^2.3.0",
+    "postcss-simple-vars": "^7.0.1"
+  },
+  "dependencies": {
+    "@mantine/core": "^9.6.0",
+    "@mantine/hooks": "^9.6.0",
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "react": "^19.2.0",
+    "react-dom": "^19.2.0"
+  }
+}

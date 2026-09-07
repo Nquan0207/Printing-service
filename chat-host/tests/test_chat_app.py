@@ -8,11 +8,11 @@ from types import SimpleNamespace
 import httpx
 import pytest
 
-from app.chat_app.config import ChatSettings
-from app.chat_app.main import COOKIE_NAME, _valid_media_path, create_app
-from app.chat_app.mcp_client import MODEL_BLOCKED_TOOLS, ollama_tools
-from app.chat_app.ollama_agent import OllamaAgent
-from app.chat_app.sessions import ChatSession, SessionStore, model_payload, utcnow
+from stockroom_chat.config import ChatSettings
+from stockroom_chat.main import COOKIE_NAME, _valid_media_path, create_app
+from stockroom_chat.mcp_client import MODEL_BLOCKED_TOOLS, ollama_tools
+from stockroom_chat.ollama_agent import OllamaAgent
+from stockroom_chat.sessions import ChatSession, SessionStore, model_payload, utcnow
 
 
 EMPTY_CART = {"items": [], "item_count": 0, "total_jpy": 0}
@@ -21,9 +21,8 @@ EMPTY_CART = {"items": [], "item_count": 0, "total_jpy": 0}
 class FakeMCP:
     instances = []
 
-    def __init__(self, project_root, api_url):
-        self.project_root = project_root
-        self.api_url = api_url
+    def __init__(self, mcp_url):
+        self.mcp_url = mcp_url
         self.calls = []
         self.closed = False
         self.model_tools = [
@@ -154,6 +153,7 @@ def settings():
     return ChatSettings(
         project_root=Path.cwd(),
         stockroom_api_url="http://127.0.0.1:8080",
+        shopping_mcp_url="http://127.0.0.1:3003/mcp",
         ollama_url="http://127.0.0.1:11434",
         ollama_model="qwen3:8b",
         host="127.0.0.1",
@@ -188,7 +188,7 @@ def test_model_payload_keeps_product_facts_but_removes_ui_images_and_token():
 
 def test_ollama_agent_runs_mcp_tool_loop_and_returns_text():
     async def scenario():
-        mcp = FakeMCP(Path.cwd(), "http://127.0.0.1:8080")
+        mcp = FakeMCP("http://127.0.0.1:3003/mcp")
         now = utcnow()
         state = ChatSession("token", mcp, now, now)
         agent = ScriptedAgent(
@@ -208,7 +208,7 @@ def test_ollama_agent_runs_mcp_tool_loop_and_returns_text():
 
 def test_ollama_agent_rejects_unknown_tool_without_calling_mcp():
     async def scenario():
-        mcp = FakeMCP(Path.cwd(), "http://127.0.0.1:8080")
+        mcp = FakeMCP("http://127.0.0.1:3003/mcp")
         now = utcnow()
         state = ChatSession("token", mcp, now, now)
         agent = ScriptedAgent(
@@ -227,7 +227,7 @@ def test_ollama_agent_rejects_unknown_tool_without_calling_mcp():
 
 def test_ollama_agent_enforces_tool_call_limit():
     async def scenario():
-        mcp = FakeMCP(Path.cwd(), "http://127.0.0.1:8080")
+        mcp = FakeMCP("http://127.0.0.1:3003/mcp")
         now = utcnow()
         state = ChatSession("token", mcp, now, now)
         agent = ScriptedAgent(
@@ -248,8 +248,7 @@ def test_session_store_isolates_mcp_connections_and_closes_them():
     async def scenario():
         FakeMCP.instances.clear()
         store = SessionStore(
-            project_root=Path.cwd(),
-            api_url="http://127.0.0.1:8080",
+            mcp_url="http://127.0.0.1:3003/mcp",
             ttl_seconds=86400,
             mcp_factory=FakeMCP,
         )

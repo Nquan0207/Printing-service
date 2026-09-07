@@ -10,12 +10,21 @@ from dotenv import load_dotenv
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
+# Compose service names the chat host is allowed to reach, per variable. Off
+# Docker only loopback is accepted -- identity here is an unverified header, so
+# the chat must never be pointed at a remote backend.
+_DOCKER_HOSTS = {
+    "STOCKROOM_API_URL": "api",
+    "OLLAMA_URL": "ollama",
+    "SHOPPING_MCP_URL": "shopping-mcp",
+}
+
 
 def _local_url(name: str, value: str) -> str:
     parsed = urlparse(value)
     allowed = {"127.0.0.1", "localhost", "::1"}
     if os.getenv("STOCKROOM_RUNTIME") == "docker":
-        allowed.add({"STOCKROOM_API_URL": "api", "OLLAMA_URL": "ollama"}[name])
+        allowed.add(_DOCKER_HOSTS[name])
     if parsed.scheme not in {"http", "https"} or parsed.hostname not in allowed:
         raise ValueError(f"{name} must use a loopback HTTP(S) URL")
     return value.rstrip("/")
@@ -25,6 +34,7 @@ def _local_url(name: str, value: str) -> str:
 class ChatSettings:
     project_root: Path
     stockroom_api_url: str
+    shopping_mcp_url: str
     ollama_url: str
     ollama_model: str
     host: str
@@ -53,6 +63,13 @@ class ChatSettings:
                 "STOCKROOM_API_URL",
                 os.getenv("STOCKROOM_API_URL", "http://127.0.0.1:8080"),
             ),
+            # The commerce MCP server, now a peer service rather than a
+            # subprocess this host spawns.
+            shopping_mcp_url=_local_url(
+                "SHOPPING_MCP_URL",
+                os.getenv("SHOPPING_MCP_URL", "http://127.0.0.1:3003"),
+            )
+            + "/mcp",
             ollama_url=_local_url(
                 "OLLAMA_URL", os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
             ),

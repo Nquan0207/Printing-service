@@ -8,7 +8,7 @@ from mcp.client.stdio import stdio_client
 
 
 async def main():
-    module = os.environ.get('MCP_CHECK_MODULE', 'app.mcp_server.server')
+    module = os.environ.get('MCP_CHECK_MODULE', 'stockroom_shop.server')
     expected = 'get_dashboard' if module.startswith('stockroom_ops') else 'list_categories'
     params = StdioServerParameters(command=sys.executable,
                                   args=['-m', module, '--transport', 'stdio'], env=dict(os.environ))

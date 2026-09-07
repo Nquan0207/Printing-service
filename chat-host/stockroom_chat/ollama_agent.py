@@ -5,7 +5,7 @@ from typing import Any, AsyncIterator
 
 import httpx
 
-from app.chat_app.sessions import ChatSession, model_payload, public_payload
+from stockroom_chat.sessions import ChatSession, model_payload, public_payload
 
 
 class AgentLimitError(RuntimeError):

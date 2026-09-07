@@ -107,6 +107,30 @@ deny-by-default. Rebuild it (`cd views && npm run build`) after changing the UI.
 Tools are read-only on purpose: product text is crawled from a live site, so a
 prompt injection could otherwise trigger order cancellation or price edits.
 
+### Views — `mcp-ops/views/`, `mcp-shop/views/`
+Both are React + Mantine 9, same theme as the apps, built by vite into one self-contained
+HTML file per View because the iframe CSP is deny-by-default.
+
+```
+src/
+  lib/         mcp.ts (App bridge), theme.ts, format.ts
+  components/  Shell.tsx, Charts.tsx
+  views/       Dashboard.tsx, Orders.tsx, …
+  entries/     dashboard.tsx, orders.tsx, …   (one per HTML shell)
+```
+
+- **Keep `cssCodeSplit: true`.** `vite-plugin-singlefile`'s recommended config turns it
+  off, which makes vite inject the stylesheet from JavaScript at runtime; a real `<style>`
+  tag needs no script to have run first.
+- **The protocol is `@modelcontextprotocol/ext-apps`, not hand-written.** `App` owns
+  ui/initialize, capability negotiation, JSON-RPC framing, auto-resize and teardown.
+- **Charts stay hand-rolled SVG** (`components/Charts.tsx`). Recharts would add ~500 KB
+  per View to draw five simple shapes; a native `<title>` per shape is the tooltip.
+- Mantine costs about 2× — a View is ~950 KB rather than ~440 KB, and every
+  `resources/read` ships the whole document inline.
+- Entry files live in `entries/` and views in `views/`: on a case-insensitive filesystem
+  `product.tsx` and `Product.tsx` are the same file.
+
 ### `chat-ui/` — React + Vite + Mantine 9
 The browser UI for the Ollama chat. Same stack and theme as `frontend-ops/`, deliberately:
 the two React apps should read as one product.
@@ -207,25 +231,32 @@ catalog.
 - Build the crawler venv with `python3.13` (Homebrew). macOS's `/usr/bin/python3` is 3.9 on
   LibreSSL and makes urllib3 warn on every command.
 
-## `app/` — the local Ollama chat, now live
+## `mcp-shop/` + `chat-host/` — the commerce lane
 
-[app/](app/) began as the apparel MVP but is now wired into compose and runs against
-stockroom: `app/mcp_server/` is the **shopping** MCP server (`shopping-mcp`, the commerce
-tools with the confirm-gated `place_order`), and `app/chat_app/` is the chat backend
-(`chat`) that hosts a local Ollama model and drives that MCP server over stdio.
+`app/` is gone. It held an MCP server and one of its clients in a single package,
+welded together by `PYTHONPATH`, and the chat spawned a **private MCP subprocess per
+browser session** while the `shopping-mcp` service ran alongside serving nobody.
 
-`app/chat_app/` serves **no HTML** — its browser UI is [chat-ui/](chat-ui/), a separate
-React service behind nginx, same shape as `frontend-ops/` → `api`. `proxy_buffering off`
-in [chat-ui/nginx.conf](chat-ui/nginx.conf) is load-bearing: `POST /api/chat` is an SSE
-stream and buffering would deliver the whole reply in one lump.
+- **`mcp-shop/`** — the commerce MCP server (`shopping-mcp`), one shared instance every
+  host connects to: the local chat, Claude Desktop, ChatGPT. Sibling of `mcp-ops/`;
+  read-only admin vs. write commerce stays a real boundary.
+- **`chat-host/`** — the MCP *host* (`chat`): model loop, browser session, SSE stream.
+  An ordinary streamable-http client of `shopping-mcp` via `SHOPPING_MCP_URL`. Serves no
+  HTML — its UI is `chat-ui/`.
 
-Chat history is persisted through the Go API, never by Python directly — see the
-`chat_messages` note under Data model.
+```
+Prompt → Ollama → chat-host → shopping-mcp → Go API → Postgres
+```
 
-`legacy/`, `plugins/` and the root `Makefile` are still dead weight from the apparel MVP;
-the Makefile's targets invoke `stockroom_crawler.cli` from the repository root, where the
-package no longer lives. `tests/` is **not** dead — it is the Python suite for `app/` and
-the crawler, run with `docker compose --profile test run --rm test-python`.
+**`owner(ctx)` must not be `id(ctx.session)`.** Carts and confirmations are keyed on it.
+A memory address is recycled once a session is collected, so a new session could inherit a
+dead one's signed-in user. A subprocess per session hid that; a shared server does not. It
+is now a `secrets` token in a `WeakKeyDictionary` with a finalizer that drops the state.
+
+**`legacy/`, `plugins/`, `app/` and the root `Makefile` are deleted.** Python tests live
+with their service (`mcp-shop/tests`, `chat-host/tests`, `crawler/tests`); root `tests/`
+keeps only cross-service e2e. Four compose targets under `--profile test`:
+`test-mcp-shop`, `test-chat-host`, `test-crawler`, `test-python`.
 
 ## What's left
 

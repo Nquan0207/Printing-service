@@ -2,14 +2,18 @@ from __future__ import annotations
 
 import argparse
 import os
+import secrets
+import threading
 from typing import Any
 from urllib.parse import urlparse
+import weakref
 
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
-from app.mcp_server.storefront_widget import STOREFRONT_HTML, STOREFRONT_URI
-from app.mcp_server.tools import (
+from stockroom_shop.storefront_widget import STOREFRONT_HTML, STOREFRONT_URI
+from stockroom_shop.tools import (
+    STATE,
     add_to_cart_handler,
     get_cart_handler,
     get_order_handler,
@@ -45,8 +49,44 @@ def annotations(read_only: bool, idempotent: bool = True) -> ToolAnnotations:
     )
 
 
+# Per-MCP-session identity. Carts, quotes and confirmations are keyed on this,
+# so two chat users talking to one server never see each other's state.
+#
+# This used to be str(id(ctx.session)). That is a memory address: CPython
+# recycles it once a session is collected, so a new session could land on a
+# dead one's key and inherit its signed-in user and pending confirmations. A
+# subprocess per session used to hide that; one shared server does not.
+#
+# A weak key means the entry disappears with the session rather than pinning it
+# alive, and the finalizer drops the commerce state that belonged to it.
+_OWNER_KEYS: "weakref.WeakKeyDictionary[Any, str]" = weakref.WeakKeyDictionary()
+_OWNER_LOCK = threading.Lock()
+
+
 def owner(ctx: Context) -> str:
-    return str(id(ctx.session))
+    session = ctx.session
+    with _OWNER_LOCK:
+        key = _OWNER_KEYS.get(session)
+        if key is not None:
+            return key
+        key = secrets.token_urlsafe(18)
+        try:
+            _OWNER_KEYS[session] = key
+        except TypeError:
+            # Not weak-referenceable: fall back to the old behaviour rather
+            # than failing the call, and accept the recycling risk.
+            return str(id(session))
+        weakref.finalize(session, forget_owner, key)
+        return key
+
+
+def forget_owner(key: str) -> None:
+    """Drop one session's commerce state once its session is gone."""
+    with STATE.lock:
+        STATE.users.pop(key, None)
+        for token, confirmation in list(STATE.confirmations.items()):
+            if confirmation.owner_key == key:
+                STATE.confirmations.pop(token, None)
 
 
 def _origin(url: str) -> str | None:
