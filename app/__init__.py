@@ -1,2 +1,0 @@
-"""RAKSUL product catalog service."""
-

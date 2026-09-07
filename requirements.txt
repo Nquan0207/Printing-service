@@ -1,9 +1,0 @@
-mcp>=1.18,<2
-fastapi>=0.115,<1
-httpx>=0.28,<1
-minio>=7.2,<8
-psycopg[binary]>=3.2,<4
-python-dotenv>=1.0,<2
-requests>=2.32,<3
-uvicorn[standard]>=0.34,<1
-pytest>=8,<10
