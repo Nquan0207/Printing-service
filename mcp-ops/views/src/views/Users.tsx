@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Group, Table, Text, TextInput } from "@mantine/core";
+import { AdminGate, isAuthRequired } from "../components/AdminGate";
 import { ErrorPanel, Shell } from "../components/Shell";
 import { createApp, readResult } from "../lib/mcp";
 import { asDate, yen } from "../lib/format";
@@ -102,7 +103,14 @@ export default function Users() {
   }
 
   if (!data) return <Shell title="Users" sub="Loading…">{null}</Shell>;
-  if (data.error) return <Shell title="Users" sub=""><ErrorPanel error={data.error} /></Shell>;
+  if (data.error)
+    return (
+      <Shell title="Users" sub="">
+        {isAuthRequired(data)
+          ? <AdminGate app={app} onSignedIn={() => refetch(applied)} />
+          : <ErrorPanel error={data.error} />}
+      </Shell>
+    );
 
   const users = data.users ?? [];
   const spent = users.reduce((n, u) => n + u.spent_jpy, 0);

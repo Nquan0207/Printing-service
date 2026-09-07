@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Group, Image, Paper, Table, Text, TextInput, Title } from "@mantine/core";
+import { AdminGate, isAuthRequired } from "../components/AdminGate";
 import { ErrorPanel, Shell } from "../components/Shell";
 import { createApp, readResult } from "../lib/mcp";
 import { yen } from "../lib/format";
@@ -122,7 +123,14 @@ export default function Catalog() {
   }
 
   if (!data) return <Shell title="Catalog" sub="Loading…">{null}</Shell>;
-  if (data.error) return <Shell title="Catalog" sub=""><ErrorPanel error={data.error} /></Shell>;
+  if (data.error)
+    return (
+      <Shell title="Catalog" sub="">
+        {isAuthRequired(data)
+          ? <AdminGate app={app} onSignedIn={() => refetch(selected, query)} />
+          : <ErrorPanel error={data.error} />}
+      </Shell>
+    );
 
   const groups = data.groups ?? [];
   const shown = selected.size

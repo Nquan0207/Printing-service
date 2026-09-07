@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Group, Image, Table, Text } from "@mantine/core";
+import { AdminGate, isAuthRequired } from "../components/AdminGate";
 import { ErrorPanel, Shell } from "../components/Shell";
 import { createApp, readResult } from "../lib/mcp";
 import { yen } from "../lib/format";
@@ -25,7 +26,16 @@ export default function Product() {
   }, []);
 
   if (!p) return <Shell title="Product" sub="Loading…">{null}</Shell>;
-  if (p.error) return <Shell title="Product" sub=""><ErrorPanel error={p.error} /></Shell>;
+  if (p.error)
+    return (
+      <Shell title="Product" sub="">
+        {isAuthRequired(p)
+          // The product View has no fetch of its own: the model opened it, so
+          // signing in here just clears the gate and asks the user to re-run.
+          ? <AdminGate app={app} onSignedIn={() => setP(null)} />
+          : <ErrorPanel error={p.error} />}
+      </Shell>
+    );
   if (!p.id) return <Shell title="Product" sub=""><Text size="sm" c="dimmed">No product returned.</Text></Shell>;
 
   return (

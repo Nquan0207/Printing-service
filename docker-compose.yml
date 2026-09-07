@@ -85,6 +85,8 @@ services:
       STOCKROOM_API_BASE: http://api:8080
       STOCKROOM_PUBLIC_API_BASE: "http://127.0.0.1:${API_HOST_PORT:-8080}"
       STOCKROOM_ADMIN_EMAIL: "${STOCKROOM_ADMIN_EMAIL:-admin@stockroom.local}"
+      # Checked against the sign-in form inside the admin panel. Change it.
+      STOCKROOM_ADMIN_PASSCODE: "${STOCKROOM_ADMIN_PASSCODE:-stockroom-admin}"
     ports: ["127.0.0.1:${MCP_HOST_PORT:-3001}:3001"]
     restart: unless-stopped
 

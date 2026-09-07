@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Group, Table, Text, TextInput } from "@mantine/core";
+import { AdminGate, isAuthRequired } from "../components/AdminGate";
 import { ErrorPanel, Shell, StatusPill } from "../components/Shell";
 import { createApp, readResult } from "../lib/mcp";
 import { asDate, yen } from "../lib/format";
@@ -99,7 +100,13 @@ export default function Orders() {
 
   if (!data) return <Shell title="Orders" sub="Loading…">{null}</Shell>;
   if (data.error) {
-    return <Shell title="Orders" sub=""><ErrorPanel error={data.error} /></Shell>;
+    return (
+      <Shell title="Orders" sub="">
+        {isAuthRequired(data)
+          ? <AdminGate app={app} onSignedIn={() => refetch(applied)} />
+          : <ErrorPanel error={data.error} />}
+      </Shell>
+    );
   }
 
   const orders = data.orders ?? [];

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Button, Group, Paper, SimpleGrid, Table, Text } from "@mantine/core";
 import { AreaChart, BarChart, ChartCard, Empty, RowChart } from "../components/Charts";
+import { AdminGate, isAuthRequired } from "../components/AdminGate";
 import { ErrorPanel, Shell } from "../components/Shell";
 import { createApp, readResult } from "../lib/mcp";
 import { shortDate, yen } from "../lib/format";
@@ -62,7 +63,9 @@ export default function Dashboard() {
   if (stats.error) {
     return (
       <Shell title="Stockroom operations" sub="Could not load figures">
-        <ErrorPanel error={stats.error} />
+        isAuthRequired(stats)
+          ? <AdminGate app={app} onSignedIn={() => pick(days)} />
+          : <ErrorPanel error={stats.error} />
       </Shell>
     );
   }
