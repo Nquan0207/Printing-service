@@ -23,12 +23,51 @@ def public_payload(payload: dict[str, Any]) -> dict[str, Any]:
     return output
 
 
+<<<<<<< Updated upstream
 SYSTEM_PROMPT = """You are the local Stockroom shopping assistant.
 Use the supplied tools for every catalog fact, product ID, size ID, price, cart total, and order number.
 Never invent catalog data. Ask for a size or quantity when it is missing.
 Only modify the cart when the user clearly asks. You may prepare an order, but you cannot place it;
 the user must approve or reject the confirmation card in the interface. Checkout is a mock and moves no money.
 Keep answers concise and reply in the user's language.
+=======
+def model_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Keep useful commerce facts but hide UI-only image fields from the model."""
+
+    def without_images(value: Any) -> Any:
+        if isinstance(value, list):
+            return [without_images(item) for item in value]
+        if isinstance(value, dict):
+            return {
+                key: without_images(item)
+                for key, item in value.items()
+                if key not in {"image", "images"}
+            }
+        return value
+
+    return without_images(public_payload(payload))
+
+
+SYSTEM_PROMPT = """You are the local Stockroom shopping assistant. Reply in the user's language.
+
+MCP-first policy:
+- For every request about products, categories, availability, product details, prices, sizes, quotes,
+  recommendations, comparisons, the cart, or orders, call the most relevant supplied MCP tool before answering.
+- Treat MCP tool results as the only source of truth. Never invent or infer product IDs, size IDs, prices,
+  stock, cart totals, or order numbers. If required information is missing, ask one short question.
+- Use conversation context to reuse IDs only when those IDs originally came from an MCP result.
+- Only modify the cart when the user clearly asks. You may prepare an order, but you cannot place it;
+  the user must approve or reject the confirmation card in the interface. Checkout is a mock and moves no money.
+
+UI response policy:
+- Structured MCP results are rendered automatically by the browser as product, cart, confirmation, and receipt cards.
+- After a successful tool result, respond with at most two short sentences describing the outcome or the next action.
+- Do not repeat the full tool result in prose. Do not enumerate every product or size.
+- Never print image URLs, raw URLs, JSON, internal IDs, markdown image syntax, tables, or long bullet lists.
+- For search results, say only how many matches were found and invite the user to use the displayed cards.
+- For cart results, state only the item count and total when useful; let the cart panel show line details.
+- A greeting or a general non-shopping question may be answered directly, briefly, without a tool.
+>>>>>>> Stashed changes
 """
 
 

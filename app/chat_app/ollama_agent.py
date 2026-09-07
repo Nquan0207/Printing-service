@@ -5,7 +5,11 @@ from typing import Any, AsyncIterator
 
 import httpx
 
+<<<<<<< Updated upstream
 from app.chat_app.sessions import ChatSession, public_payload
+=======
+from app.chat_app.sessions import ChatSession, model_payload, public_payload
+>>>>>>> Stashed changes
 
 
 class AgentLimitError(RuntimeError):
@@ -131,11 +135,28 @@ class OllamaAgent:
 
                 visible_result = public_payload(result)
                 yield {"type": "tool_result", "tool": name, "result": visible_result}
+<<<<<<< Updated upstream
+=======
+                compact_result = model_payload(result)
+>>>>>>> Stashed changes
                 state.messages.append(
                     {
                         "role": "tool",
                         "tool_name": name or "unknown",
+<<<<<<< Updated upstream
                         "content": json.dumps(visible_result, ensure_ascii=False),
+=======
+                        "content": json.dumps(
+                            {
+                                "ui_status": (
+                                    "This structured result is already rendered in the UI. "
+                                    "Do not repeat its records; give at most a two-sentence summary."
+                                ),
+                                "result": compact_result,
+                            },
+                            ensure_ascii=False,
+                        ),
+>>>>>>> Stashed changes
                     }
                 )
 
