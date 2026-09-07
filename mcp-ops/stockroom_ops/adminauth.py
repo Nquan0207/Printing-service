@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hmac
 import logging
+import time
 import secrets
 import threading
 from typing import Any
@@ -25,6 +26,19 @@ _SESSIONS: dict[str, dict[str, Any]] = {}
 
 STDIO_KEY = "stdio-connection"
 _stdio = False
+
+# Idle timeout, refreshed on every authenticated call. A long-lived host
+# connection would otherwise stay admin until someone remembered to click sign
+# out, which on a shared screen is indefinitely.
+_ttl_seconds = 60.0
+# Keys whose grant we just expired, so the panel can say "timed out" instead of
+# silently showing a login form over what used to be a dashboard. Read once.
+_EXPIRED: dict[str, float] = {}
+
+
+def set_ttl(seconds: float) -> None:
+    global _ttl_seconds
+    _ttl_seconds = max(1.0, float(seconds))
 
 
 def set_stdio(enabled: bool) -> None:
@@ -49,9 +63,32 @@ def forget(key: str) -> None:
 
 
 def admin(owner_key: str) -> dict[str, Any] | None:
-    """The signed-in admin for this connection, or None."""
+    """The signed-in admin for this connection, or None if absent or idle.
+
+    Sliding window: an admin who is using the panel stays signed in, and one
+    who walked away does not. monotonic() so a clock change cannot extend or
+    revoke a session.
+    """
+    now = time.monotonic()
     with _LOCK:
-        return _SESSIONS.get(owner_key)
+        session = _SESSIONS.get(owner_key)
+        if session is None:
+            return None
+        if now - session["last_seen"] > _ttl_seconds:
+            _SESSIONS.pop(owner_key, None)
+            _EXPIRED[owner_key] = now
+            if len(_EXPIRED) > 256:  # bounded: this is a hint, not a record
+                _EXPIRED.clear()
+            log.info("admin session expired for %s", session["email"])
+            return None
+        session["last_seen"] = now
+        return session
+
+
+def just_expired(owner_key: str) -> bool:
+    """True once, for the call that discovered the grant had timed out."""
+    with _LOCK:
+        return _EXPIRED.pop(owner_key, None) is not None
 
 
 def user_id(owner_key: str) -> int | None:
@@ -67,14 +104,25 @@ def public(owner_key: str) -> dict[str, Any] | None:
     session = admin(owner_key)
     if not session:
         return None
-    return {"email": session["email"], "name": session.get("name", "")}
+    return {
+        "email": session["email"],
+        "name": session.get("name", ""),
+        # So the panel can show how long it has before it locks.
+        "idle_timeout_seconds": int(_ttl_seconds),
+    }
 
 
 def sign_in(owner_key: str, user: dict[str, Any]) -> dict[str, Any]:
     """Bind a verified admin to this connection."""
-    grant = {"user_id": int(user["user_id"]), "email": user["email"], "name": user.get("name", "")}
+    grant = {
+        "user_id": int(user["user_id"]),
+        "email": user["email"],
+        "name": user.get("name", ""),
+        "last_seen": time.monotonic(),
+    }
     with _LOCK:
         _SESSIONS[owner_key] = grant
+        _EXPIRED.pop(owner_key, None)
     log.info("admin session opened for %s", grant["email"])
     return grant
 
@@ -103,3 +151,18 @@ AUTH_REQUIRED = {
         "message": "Sign in with an administrator email and passcode to view this.",
     }
 }
+
+
+def auth_required(owner_key: str) -> dict[str, Any]:
+    """The refusal, saying whether this was a timeout or never signed in."""
+    if just_expired(owner_key):
+        return {
+            "error": {
+                "code": "auth_required",
+                "message": (
+                    f"Signed out after {int(_ttl_seconds)}s of inactivity. "
+                    "Sign in again to continue."
+                ),
+            }
+        }
+    return AUTH_REQUIRED

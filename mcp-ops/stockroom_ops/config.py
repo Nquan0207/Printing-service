@@ -15,6 +15,7 @@ class Settings:
     public_api_base: str
     admin_email: str
     admin_passcode: str
+    admin_session_ttl_seconds: int
     host: str
     port: int
 
@@ -34,6 +35,12 @@ class Settings:
             # admin can ever sign in -- fail closed, because "unset == no
             # check" is how a gate like this quietly stops being one.
             admin_passcode=os.getenv("STOCKROOM_ADMIN_PASSCODE", ""),
+            # Idle timeout for a signed-in admin, refreshed on every call.
+            # Short by default because this is a demo surface; raise it for
+            # real use, where re-authenticating every minute is unusable.
+            admin_session_ttl_seconds=int(
+                os.getenv("STOCKROOM_ADMIN_SESSION_TTL_SECONDS", "60")
+            ),
             host=os.getenv("MCP_HOST", "127.0.0.1"),
             port=int(os.getenv("MCP_PORT", "3001")),
         )

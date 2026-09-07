@@ -138,6 +138,7 @@ def with_admin(payload: dict[str, Any], owner_key: str) -> dict[str, Any]:
 
 
 def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
+    adminauth.set_ttl(settings.admin_session_ttl_seconds)
     apps = Apps()
     api = StockroomApi(settings.api_base, settings.admin_email)
 
@@ -206,7 +207,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         owner_key = adminauth.owner(ctx)
         admin_id = adminauth.user_id(owner_key)
         if admin_id is None:
-            return adminauth.AUTH_REQUIRED
+            return adminauth.auth_required(owner_key)
         days = max(1, min(int(days), 365))
         try:
             return with_admin(await api.stats(admin_id, days), owner_key)
@@ -300,7 +301,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         owner_key = adminauth.owner(ctx)
         admin_id = adminauth.user_id(owner_key)
         if admin_id is None:
-            return adminauth.AUTH_REQUIRED
+            return adminauth.auth_required(owner_key)
         bad = [s for s in normalize_tokens(status) if s not in STATUSES]
         if bad:
             # Caught here rather than at the API so the message can name the
@@ -383,7 +384,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         owner_key = adminauth.owner(ctx)
         admin_id = adminauth.user_id(owner_key)
         if admin_id is None:
-            return adminauth.AUTH_REQUIRED
+            return adminauth.auth_required(owner_key)
         # One request. The API resolves the words to slugs, filters in SQL and
         # returns category-first groups, so there is nothing to fetch first and
         # nothing to regroup after.
@@ -430,7 +431,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         owner_key = adminauth.owner(ctx)
         admin_id = adminauth.user_id(owner_key)
         if admin_id is None:
-            return adminauth.AUTH_REQUIRED
+            return adminauth.auth_required(owner_key)
         text = str(product).strip()
         try:
             if text.isdigit():
@@ -514,7 +515,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         owner_key = adminauth.owner(ctx)
         admin_id = adminauth.user_id(owner_key)
         if admin_id is None:
-            return adminauth.AUTH_REQUIRED
+            return adminauth.auth_required(owner_key)
         wanted = str(role).strip().lower()
         if wanted not in ("", "admin", "customer"):
             return {
