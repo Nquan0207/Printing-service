@@ -163,10 +163,30 @@ def storefront_widget() -> str:
 def open_storefront(
     query: str | None = None,
     category: str | None = None,
-    limit: int = 20,
+    limit: int = 60,
+    per_category: int | None = None,
 ) -> dict[str, Any]:
-    """Render the embedded database storefront. Never open an external supplier website or browser."""
-    return search_products_handler(query=query, category=category, limit=limit)
+    """Render the embedded database storefront. Never open an external supplier website or browser.
+
+    `limit` caps the TOTAL across categories, and whole groups are trimmed once
+    it is spent -- so a small limit shows every product of whichever category
+    sorts first and none of the rest. `per_category` is what spreads the panel
+    across the catalog; use it whenever the user wants to browse rather than to
+    find one specific thing.
+
+    The catalog is in Japanese, so `query` (a substring match over the product
+    text) rarely matches an English word. Put English words in `category`,
+    which folds case and separators and matches slugs and display names alike.
+    """
+    # A bare "open the shop" should touch every category, not spend the whole
+    # limit on whichever one sorts first. It stays a small sample on purpose:
+    # the View lists the categories itself and fetches a whole category when
+    # one is opened, so a large payload here would only burn model context.
+    if per_category is None and not query and not category:
+        per_category = 3
+    return search_products_handler(
+        query=query, category=category, limit=limit, per_category=per_category
+    )
 
 
 @mcp.tool(title="Mock sign in", annotations=annotations(False, False), meta=APP_CALLABLE, structured_output=True)

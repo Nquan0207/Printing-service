@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
-  Alert, Anchor, Badge, Button, Card, Center, Group, Image, NumberInput, Paper,
-  SimpleGrid, Stack, Text, TextInput, Title,
+  Alert, Anchor, Badge, Button, Card, Center, Group, Image, NumberInput, Pagination,
+  Paper, SimpleGrid, Stack, Text, TextInput, Title,
 } from "@mantine/core";
 import { app, callTool, initialToolOutput, isOpenAIHost, unwrap } from "../lib/mcp";
 
@@ -11,11 +11,21 @@ type Product = {
   category: { name: string } | null;
   base_price_jpy: number; sizes: Size[]; images: string[];
 };
+type Category = { id: number; slug: string; name: string; product_count: number };
+type Group = { category: { slug: string; name: string }; count: number; products: Product[] };
 type CartItem = { id: number; product_name: string; size_name: string; quantity: number; subtotal_jpy: number };
 type Cart = { items: CartItem[]; item_count: number; total_jpy: number };
 type User = { name: string; email: string };
 type Confirmation = { shipping_address: string };
 type Order = { order_number: string; total_jpy: number };
+
+/** Products per page inside a category. */
+const PAGE_SIZE = 12;
+/** The Go API caps a request at 100 products; the largest category holds 34,
+ *  so one call always fetches a whole category and paging stays client-side. */
+const CATEGORY_FETCH_LIMIT = 100;
+/** Pseudo-slug for "these are search results, not a category". */
+const SEARCH = "__search__";
 
 const yen = (v: unknown) => (Number.isInteger(v) ? `¥${(v as number).toLocaleString()}` : "—");
 
@@ -93,7 +103,14 @@ function ProductCard({ product, busy, onAdd }: {
 }
 
 export default function Storefront() {
-  const [products, setProducts] = useState<Product[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
+  /** Slug of the category on screen, or SEARCH. */
+  const [active, setActive] = useState<string | null>(null);
+  /** Whole categories, fetched once each and kept. Nothing here is re-fetched
+   *  when you page or switch back, so browsing costs one call per category. */
+  const [cache, setCache] = useState<Record<string, Product[]>>({});
+  const [page, setPage] = useState(1);
+
   const [user, setUser] = useState<User | null>(null);
   const [cart, setCart] = useState<Cart | null>(null);
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
@@ -107,26 +124,85 @@ export default function Storefront() {
   const [query, setQuery] = useState("");
   const [address, setAddress] = useState("");
 
-  /** Apply whatever a tool result carried; every tool returns the same envelope. */
-  function seed(out: any) {
+  /** Apply the commerce parts of any tool result; every tool shares the envelope. */
+  function seedCommerce(out: any) {
     if (!out || typeof out !== "object") return;
-    if (out.groups) setProducts(out.groups.flatMap((g: any) => g.products ?? []));
     if (out.user) setUser(out.user);
     if (out.cart) setCart(out.cart);
     if (out.confirmation) setConfirmation(out.confirmation);
     if (out.order) setOrder(out.order);
   }
 
+  /** Load the category list, then open whichever category the model asked for. */
+  async function bootstrap(seed: any) {
+    seedCommerce(seed);
+    try {
+      const list = await callTool<{ categories?: Category[] }>("list_categories");
+      const cats = list.categories ?? [];
+      setCategories(cats);
+
+      // If the prompt named a category, the seed's groups say which.
+      const groups: Group[] = seed?.groups ?? [];
+      const first = groups[0]?.category?.slug ?? cats[0]?.slug ?? null;
+      if (first) void openCategory(first, cats);
+    } catch (error: any) {
+      setMessage({ text: error?.message ?? String(error), bad: true });
+    }
+  }
+
   useEffect(() => {
     if (isOpenAIHost()) {
-      seed(initialToolOutput());
+      void bootstrap(initialToolOutput());
       return;
     }
-    // The host pushes the first result when it renders the View.
-    app.ontoolresult = (result: unknown) => seed(unwrap(result));
-    // A blank iframe reads as a host bug, so failures always render.
+    app.ontoolresult = (result: unknown) => void bootstrap(unwrap(result));
     app.connect().catch((error: any) => setBridgeError(error?.message || String(error)));
   }, []);
+
+  /** Fetch one whole category, once, and show its first page. */
+  async function openCategory(slug: string, known = categories) {
+    setActive(slug);
+    setPage(1);
+    setQuery("");
+    if (cache[slug]) return;
+
+    setBusy(true);
+    try {
+      const out = await callTool<{ groups?: Group[] }>("search_products", {
+        category: slug,
+        limit: CATEGORY_FETCH_LIMIT,
+      });
+      const products = (out.groups ?? []).flatMap((g) => g.products ?? []);
+      setCache((c) => ({ ...c, [slug]: products }));
+      const label = known.find((c) => c.slug === slug)?.name ?? slug;
+      setMessage({ text: `${label} — ${products.length} product(s).` });
+    } catch (error: any) {
+      setMessage({ text: error?.message ?? String(error), bad: true });
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function runSearch() {
+    const q = query.trim();
+    if (!q) return;
+    setBusy(true);
+    try {
+      const out = await callTool<{ groups?: Group[]; count?: number }>("search_products", {
+        query: q,
+        limit: CATEGORY_FETCH_LIMIT,
+      });
+      const products = (out.groups ?? []).flatMap((g) => g.products ?? []);
+      setCache((c) => ({ ...c, [SEARCH]: products }));
+      setActive(SEARCH);
+      setPage(1);
+      setMessage({ text: `${products.length} product(s) matching “${q}”.` });
+    } catch (error: any) {
+      setMessage({ text: error?.message ?? String(error), bad: true });
+    } finally {
+      setBusy(false);
+    }
+  }
 
   async function run<T>(work: () => Promise<T>, done?: (out: T) => void) {
     setBusy(true);
@@ -145,19 +221,13 @@ export default function Storefront() {
       const withCart = await callTool("get_cart");
       return { ...signedIn, cart: withCart.cart };
     }, (out) => {
-      seed(out);
+      seedCommerce(out);
       setMessage({ text: "Database user and cart loaded." });
-    });
-
-  const search = () =>
-    run(() => callTool("search_products", { query: query || null, limit: 30 }), (out) => {
-      seed(out);
-      setMessage({ text: `${out.count ?? 0} product(s).` });
     });
 
   const add = (productId: number, sizeId: number, quantity: number) =>
     run(() => callTool("add_to_cart", { product_id: productId, size_id: sizeId, quantity }), (out) => {
-      seed(out);
+      seedCommerce(out);
       setConfirmation(null);
       setOrder(null);
       setMessage({ text: "Added to the database cart." });
@@ -165,13 +235,13 @@ export default function Storefront() {
 
   const removeLine = (itemId: number) =>
     run(() => callTool("remove_cart_item", { item_id: itemId }), (out) => {
-      seed(out);
+      seedCommerce(out);
       setConfirmation(null);
     });
 
   const prepare = () =>
     run(() => callTool("prepare_order", { shipping_address: address }), (out) => {
-      seed(out);
+      seedCommerce(out);
       setOrder(null);
       setMessage({ text: "Review the confirmation before approving." });
     });
@@ -187,6 +257,17 @@ export default function Storefront() {
         setMessage({ text: "Rejected. Database cart preserved." });
       }
     });
+
+  const shown = active ? cache[active] ?? [] : [];
+  const pageCount = Math.max(1, Math.ceil(shown.length / PAGE_SIZE));
+  const pageItems = useMemo(
+    () => shown.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE),
+    [shown, page],
+  );
+  const activeName =
+    active === SEARCH
+      ? `Search: ${query || "results"}`
+      : categories.find((c) => c.slug === active)?.name ?? "";
 
   return (
     <Stack gap="sm" p="md">
@@ -226,11 +307,31 @@ export default function Storefront() {
             Demo user <b>{user.name}</b> · {user.email}
           </Text>
 
+          {/* Every category, always. Clicking one loads it whole and pages
+              through it here rather than asking the model for more. */}
+          <Group gap={6}>
+            {categories.map((c) => (
+              <Button
+                key={c.slug}
+                size="compact-xs"
+                tt="none"
+                title={c.slug}
+                disabled={busy}
+                variant={active === c.slug ? "light" : "default"}
+                color={active === c.slug ? "raksul" : "gray"}
+                onClick={() => openCategory(c.slug)}
+              >
+                {c.name}
+                <Text span c="dimmed" ml={5}>{c.product_count}</Text>
+              </Button>
+            ))}
+          </Group>
+
           <Group gap="xs" wrap="nowrap">
-            <TextInput size="xs" flex={1} placeholder="Search Stockroom products"
+            <TextInput size="xs" flex={1} placeholder="Search across every category…"
               value={query} onChange={(e) => setQuery(e.currentTarget.value)}
-              onKeyDown={(e) => e.key === "Enter" && search()} />
-            <Button size="xs" loading={busy} onClick={search}>Search</Button>
+              onKeyDown={(e) => e.key === "Enter" && runSearch()} />
+            <Button size="xs" loading={busy} onClick={runSearch}>Search</Button>
           </Group>
 
           {message && (
@@ -238,17 +339,36 @@ export default function Storefront() {
           )}
 
           <Group align="flex-start" gap="md" wrap="wrap">
-            <div style={{ flex: "1 1 380px", minWidth: 0 }}>
-              {products.length ? (
-                <SimpleGrid cols={{ base: 1, xs: 2, md: 3 }} spacing="xs">
-                  {products.map((p) => (
-                    <ProductCard key={p.id} product={p} busy={busy} onAdd={add} />
-                  ))}
-                </SimpleGrid>
+            <Stack gap="xs" style={{ flex: "1 1 380px", minWidth: 0 }}>
+              <Group justify="space-between" align="center">
+                <Title order={2} size="h5">{activeName}</Title>
+                {shown.length > 0 && (
+                  <Text size="xs" c="dimmed">
+                    {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, shown.length)} of {shown.length}
+                  </Text>
+                )}
+              </Group>
+
+              {shown.length === 0 ? (
+                <Text size="xs" c="dimmed">
+                  {busy ? "Loading…" : "No products here."}
+                </Text>
               ) : (
-                <Text size="xs" c="dimmed">No products in the Stockroom database.</Text>
+                <>
+                  <SimpleGrid cols={{ base: 1, xs: 2, md: 3 }} spacing="xs">
+                    {pageItems.map((p) => (
+                      <ProductCard key={p.id} product={p} busy={busy} onAdd={add} />
+                    ))}
+                  </SimpleGrid>
+                  {pageCount > 1 && (
+                    <Group justify="center" mt="xs">
+                      {/* Paging is local: the whole category is already here. */}
+                      <Pagination size="sm" total={pageCount} value={page} onChange={setPage} withEdges />
+                    </Group>
+                  )}
+                </>
               )}
-            </div>
+            </Stack>
 
             <Paper p="md" radius="md" style={{ flex: "0 1 320px", minWidth: 260 }}>
               <Title order={2} size="h5">Cart · {cart?.item_count ?? 0}</Title>
