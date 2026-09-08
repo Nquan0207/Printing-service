@@ -50,22 +50,26 @@ the way `web` proxies to `api`.
 
 ---
 
-## Run it — Docker only
+## Run it — Docker services and native Ollama
 
-Install Docker Desktop (or Docker Engine with the Compose plugin), clone the
-repository, and run from its root. No native Python, Node, Go or Ollama is needed:
+Start Docker Desktop and native Ollama on your Mac, then run from this repository:
 
 ```bash
-docker compose up -d --build --wait
+ollama pull qwen3:8b
+# Run `ollama serve` in another terminal only if Ollama is not already running.
+docker compose up -d --build chat-ui
 ```
 
-Optional settings are in `.env.example`; copy it to `.env` only to customize.
-Startup uses the existing PostgreSQL database and MinIO bucket. It does not
-run the crawler, initialize schemas, or validate them through a bootstrap job.
-The API waits only for PostgreSQL and MinIO to be healthy.
+Open <http://127.0.0.1:3004>. The chat connects to native Ollama through
+`host.docker.internal:11434`; native Ollama handles GPU inference. `ollama ps`
+shows whether the loaded model uses GPU or CPU. The optional `docker-ollama`
+profile is not used by this configuration.
 
-Ollama downloads **qwen3:8b** if needed and reuses the model on later starts.
-It uses CPU by default. `OLLAMA_TIMEOUT_SECONDS` defaults to 600 for CPU inference.
+The chat discovers both shopping and ops MCP tools. The UI and its isolated MCP
+app sandbox share port **3004**; the sandbox uses `localhost` as a separate browser origin.
+Optional settings are in `.env.example`. Existing PostgreSQL and MinIO data are
+reused; startup does not initialize schemas or run the crawler.
+
 If you only need MCP for ChatGPT/Claude, start without chat or Ollama:
 
 ```bash
@@ -77,7 +81,7 @@ docker compose up -d --build --wait mcp shopping-mcp
 | `web` | http://127.0.0.1:3000 | Shop and admin dashboard |
 | `api` | http://127.0.0.1:8080 | Go API |
 | `mcp` | http://127.0.0.1:3001/mcp | Read-only admin MCP |
-| `chat-ui` | http://127.0.0.1:3004 | Shopping chat UI (React) — **open this one** |
+| `chat-ui` | http://127.0.0.1:3004 | Shopping and ops chat UI — **open this one** |
 | `chat` | http://127.0.0.1:3002 | Chat backend: JSON and the SSE stream, no HTML |
 | `shopping-mcp` | http://127.0.0.1:3003/mcp | Commerce MCP ([mcp-shop/](mcp-shop/)), confirm-gated checkout |
 | `postgres` | 127.0.0.1:5432 | Database `stockroom`, user `raksul`, password `raksul_password` |
@@ -92,7 +96,7 @@ and `raksul_minio_data` volume names; it does not migrate older differently name
 Check service startup from another terminal:
 
 ```bash
-docker compose logs -f api model-init chat
+docker compose logs -f api mcp shopping-mcp chat
 docker compose ps -a
 ```
 
@@ -309,6 +313,22 @@ The page is a React app served by nginx ([chat-ui/](chat-ui/)); nginx proxies
 `/api`, `/media` and `/healthz` to the `chat` backend, so the browser sees one
 origin. `chat` itself serves no HTML: it answers JSON and streams the model's
 reply as Server-Sent Events.
+
+Try these prompts in English, Japanese or Vietnamese:
+
+- “Open the interactive storefront.”
+- “Show the operations dashboard for the last 30 days.”
+- “List customer orders” or “Show users with order activity.”
+- “Show the admin catalog” or “Show product details for product [ID].”
+
+Ops requests display a fresh administrator name/email form. Enter the registered
+identity for each request and again for each panel action; the shopping login is
+not an admin credential. The backend verifies the identity for every call.
+
+Dashboards and the storefront render inside the conversation. Checkout requires
+an explicit host Approve/Reject action; confirmation tokens remain server-side.
+Reloading restores saved views without automatically rerunning their tools. A
+pending identity request expires with the session; ask again if its form expired.
 
 Ask for products in English, Japanese or Vietnamese. The model picks MCP tools
 from `shopping-mcp`; results render as product cards you can add to the cart

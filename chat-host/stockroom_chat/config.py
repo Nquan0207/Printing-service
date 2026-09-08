@@ -17,6 +17,7 @@ _DOCKER_HOSTS = {
     "STOCKROOM_API_URL": "api",
     "OLLAMA_URL": "ollama",
     "SHOPPING_MCP_URL": "shopping-mcp",
+    "OPS_MCP_URL": "mcp",
 }
 
 
@@ -46,6 +47,7 @@ class ChatSettings:
     max_tool_calls: int = 8
     max_sessions: int = 20
     ollama_timeout_seconds: int = 600
+    ops_mcp_url: str = "http://127.0.0.1:3001/mcp"
 
     @classmethod
     def from_env(cls) -> "ChatSettings":
@@ -75,6 +77,7 @@ class ChatSettings:
             ollama_url=_local_url(
                 "OLLAMA_URL", os.getenv("OLLAMA_URL", "http://127.0.0.1:11434")
             ),
+            ops_mcp_url=_local_url("OPS_MCP_URL", os.getenv("OPS_MCP_URL", "http://127.0.0.1:3001/mcp")),
             ollama_model=os.getenv("OLLAMA_MODEL", "qwen3:8b"),
             ollama_timeout_seconds=max(1, int(os.getenv("OLLAMA_TIMEOUT_SECONDS", "600"))),
             host=host,

@@ -3,6 +3,7 @@ import { Badge, Paper, ScrollArea, Stack, Text } from "@mantine/core";
 import type { Category } from "../lib/api";
 import type { Entry } from "../lib/transcript";
 import { CategoryChips } from "./CategoryChips";
+import { MCPApp, OpsRequest } from "./MCPApp";
 import { ProductGrid } from "./ProductGrid";
 
 type Props = {
@@ -24,6 +25,8 @@ export function MessageList({ entries, onAdd, onPickCategory, busy }: Props) {
     <ScrollArea className="chat-scroll" viewportRef={viewport} p="md" aria-live="polite">
       <Stack gap="sm">
         {entries.map((entry) => {
+          if (entry.kind === "app") return <MCPApp key={entry.key} descriptor={entry.descriptor} result={entry.result} restored={entry.restored} />;
+          if (entry.kind === "identity") return <OpsRequest key={entry.key} id={entry.id} />;
           if (entry.kind === "products") {
             return <ProductGrid key={entry.key} products={entry.products} onAdd={onAdd} />;
           }

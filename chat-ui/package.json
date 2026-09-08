@@ -5,12 +5,14 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test tests/*.test.mjs"
   },
   "dependencies": {
     "@mantine/core": "^9.6.0",
     "@mantine/hooks": "^9.6.0",
     "@mantine/notifications": "^9.6.0",
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
     "react": "^19.2.0",
     "react-dom": "^19.2.0"
   },
