@@ -85,6 +85,10 @@ services:
       STOCKROOM_API_BASE: http://api:8080
       STOCKROOM_PUBLIC_API_BASE: "http://127.0.0.1:${API_HOST_PORT:-8080}"
       STOCKROOM_ADMIN_EMAIL: "${STOCKROOM_ADMIN_EMAIL:-admin@stockroom.local}"
+      # Checked against the sign-in form inside the admin panel. Change it.
+      STOCKROOM_ADMIN_PASSCODE: "${STOCKROOM_ADMIN_PASSCODE:-stockroom-admin}"
+      # Idle timeout for a signed-in admin, refreshed on every call.
+      STOCKROOM_ADMIN_SESSION_TTL_SECONDS: "${STOCKROOM_ADMIN_SESSION_TTL_SECONDS:-60}"
     ports: ["127.0.0.1:${MCP_HOST_PORT:-3001}:3001"]
     restart: unless-stopped
 
@@ -134,7 +138,9 @@ services:
     environment:
       STOCKROOM_API_URL: http://api:8080
       SHOPPING_MCP_URL: http://shopping-mcp:3003
-      OLLAMA_URL: http://host.docker.internal:11434
+      # Defaults to an Ollama on the host (Metal GPU). Set OLLAMA_URL to
+      # http://ollama:11434 with --profile docker-ollama to keep it in Docker.
+      OLLAMA_URL: "${OLLAMA_URL:-http://host.docker.internal:11434}"
       OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen3:8b}"
       OLLAMA_TIMEOUT_SECONDS: "${OLLAMA_TIMEOUT_SECONDS:-600}"
       CHAT_SESSION_TTL_SECONDS: "${CHAT_SESSION_TTL_SECONDS:-86400}"

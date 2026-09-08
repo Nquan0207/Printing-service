@@ -13,6 +13,8 @@ export default defineConfig({
     // script to have run first, so keep it on and let the plugin inline the
     // emitted stylesheet instead.
     cssCodeSplit: true,
-    rollupOptions: { input: "storefront.html" },
+    // One build per View, driven by build.mjs.
+    emptyOutDir: false,
+    rollupOptions: { input: process.env.INPUT ?? "storefront.html" },
   },
 });

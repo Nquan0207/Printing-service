@@ -107,6 +107,13 @@ class StockroomClient:
     def place_order(self, shipping_address: str, user_id: int | None = None):
         return self._request("POST", "/api/v1/orders", user_id=user_id, json={"shipping_address": shipping_address})
 
+    def orders(self, user_id: int | None = None, limit: int = 20):
+        # Query strings are built here, like search_products: _request takes a
+        # path, not params.
+        return self._request(
+            "GET", "/api/v1/orders?" + urlencode({"limit": limit}), user_id=user_id
+        )
+
     def order(self, order_number: str, user_id: int | None = None):
         return self._request("GET", f"/api/v1/orders/{order_number}", user_id=user_id)
 

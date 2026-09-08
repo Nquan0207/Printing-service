@@ -58,6 +58,38 @@ func toOrder(o store.Order) orderJSON {
 // The confirm-gate is NOT enforced here: this endpoint cannot see which View
 // called it, so the MCP server must ensure place_order is reachable only from
 // the confirm View. See docs/api-contract.md.
+// ListOrders returns the caller's own order history.
+//
+// Scoped to currentUserID like every other shopper route -- there is no way to
+// ask for somebody else's, because no user id is accepted from the request
+// body or query string.
+func (s *Server) ListOrders(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, err := intParam(q.Get("limit"), defaultAdminLimit, 1, maxAdminLimit)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "limit is out of range.")
+		return
+	}
+	offset, err := intParam(q.Get("offset"), 0, 0, 1<<30)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, CodeInvalidRequest, "offset is out of range.")
+		return
+	}
+
+	orders, total, err := s.store.UserOrders(r.Context(), s.currentUserID(r), limit, offset)
+	if err != nil {
+		writeInternal(w, "list orders", err)
+		return
+	}
+	out := make([]orderJSON, 0, len(orders))
+	for _, o := range orders {
+		out = append(out, toOrder(o))
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"orders": out, "total": total, "limit": limit, "offset": offset,
+	})
+}
+
 func (s *Server) PlaceOrder(w http.ResponseWriter, r *http.Request) {
 	var req placeOrderRequest
 	if !decodeJSON(w, r, &req) {

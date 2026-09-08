@@ -44,6 +44,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /api/v1/cart", s.GetCart)
 	mux.HandleFunc("POST /api/v1/cart/items", s.AddCartItem)
 	mux.HandleFunc("DELETE /api/v1/cart/items/{item_id}", s.DeleteCartItem)
+	mux.HandleFunc("GET /api/v1/orders", s.ListOrders)
 	mux.HandleFunc("POST /api/v1/orders", s.PlaceOrder)
 	mux.HandleFunc("GET /api/v1/orders/{order_number}", s.GetOrder)
 

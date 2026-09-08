@@ -11,8 +11,17 @@ import weakref
 from mcp.server.fastmcp import Context, FastMCP
 from mcp.types import ToolAnnotations
 
-from stockroom_shop.storefront_widget import STOREFRONT_HTML, STOREFRONT_URI
+from stockroom_shop.storefront_widget import (
+    CART_HTML,
+    CART_URI,
+    ORDERS_HTML,
+    ORDERS_URI,
+    STOREFRONT_HTML,
+    STOREFRONT_URI,
+)
 from stockroom_shop.tools import (
+    order_history_handler,
+    sign_out_handler,
     STATE,
     add_to_cart_handler,
     get_cart_handler,
@@ -154,6 +163,45 @@ def storefront_widget() -> str:
     return STOREFRONT_HTML
 
 
+def _panel_meta(uri: str, description: str) -> dict[str, Any]:
+    """Resource meta for a focused panel.
+
+    connectDomains stays empty: these panels fetch nothing themselves, every
+    read goes back through tools/call. resourceDomains is what lets product
+    images load from the Go service, a different origin than the iframe.
+    """
+    return {
+        "ui": {
+            "prefersBorder": True,
+            "csp": {"connectDomains": [], "resourceDomains": RESOURCE_DOMAINS},
+        },
+        "openai/widgetDescription": description,
+        "openai/widgetCSP": {"connect_domains": [], "resource_domains": RESOURCE_DOMAINS},
+    }
+
+
+@mcp.resource(
+    ORDERS_URI,
+    name="RAKSUL Stockroom order history",
+    description="The shopper's own past orders with their line items.",
+    mime_type="text/html;profile=mcp-app",
+    meta=_panel_meta(ORDERS_URI, "Past orders for the signed-in shopper."),
+)
+def orders_widget() -> str:
+    return ORDERS_HTML
+
+
+@mcp.resource(
+    CART_URI,
+    name="RAKSUL Stockroom cart",
+    description="The current cart, with removal and the mock confirmation.",
+    mime_type="text/html;profile=mcp-app",
+    meta=_panel_meta(CART_URI, "The shopper's current cart and mock checkout."),
+)
+def cart_widget() -> str:
+    return CART_HTML
+
+
 @mcp.tool(
     title="Open embedded RAKSUL Stockroom storefront",
     annotations=annotations(True),
@@ -161,6 +209,7 @@ def storefront_widget() -> str:
     structured_output=True,
 )
 def open_storefront(
+    ctx: Context,
     query: str | None = None,
     category: str | None = None,
     limit: int = 60,
@@ -184,19 +233,41 @@ def open_storefront(
     # one is opened, so a large payload here would only burn model context.
     if per_category is None and not query and not category:
         per_category = 3
+    # owner_key rides along so the envelope carries the shopper's identity:
+    # this result is what the widget renders from, and without it a signed-in
+    # shopper would be shown the sign-in form again on every open.
     return search_products_handler(
-        query=query, category=category, limit=limit, per_category=per_category
+        query=query, category=category, limit=limit, per_category=per_category,
+        owner_key=owner(ctx),
     )
 
 
 @mcp.tool(title="Mock sign in", annotations=annotations(False, False), meta=APP_CALLABLE, structured_output=True)
 def mock_sign_in(name: str, email: str, ctx: Context) -> dict[str, Any]:
-    """Select or create a demo user in the Stockroom database; no password or real authentication."""
+    """Switch to a different demo shopper. Selects or creates a database user; no password.
+
+    DO NOT call this to start shopping. Browsing and the cart need no identity,
+    and checkout collects a name and email on its own -- asking up front is the
+    behaviour this replaced. Use it only when the shopper explicitly asks to
+    sign in or to switch to another account. Anything already in a guest cart
+    follows them to the account they name.
+    """
     return mock_sign_in_handler(owner(ctx), name, email)
+
+
+@mcp.tool(title="Sign out", annotations=annotations(False, False), meta=APP_CALLABLE, structured_output=True)
+def sign_out(ctx: Context) -> dict[str, Any]:
+    """Forget the current shopper so the next order can be placed as someone else.
+
+    Their cart stays with their account and is waiting when they sign back in;
+    the session becomes an anonymous guest again.
+    """
+    return sign_out_handler(owner(ctx))
 
 
 @mcp.tool(title="Search Stockroom products", annotations=annotations(True), meta=APP_CALLABLE, structured_output=True)
 def search_products(
+    ctx: Context,
     query: str | None = None,
     category: str | None = None,
     min_price: int | None = None,
@@ -223,7 +294,9 @@ def search_products(
     An empty result means no match, not an empty shop -- retry with the word in
     `category` before telling the user the catalog has nothing.
     """
-    return search_products_handler(query, category, min_price, max_price, limit, per_category)
+    return search_products_handler(
+        query, category, min_price, max_price, limit, per_category, owner_key=owner(ctx)
+    )
 
 
 @mcp.tool(title="Get Stockroom product", annotations=annotations(True), meta=APP_CALLABLE, structured_output=True)
@@ -251,7 +324,16 @@ def get_quote(product_id: int, size_id: int, quantity: int, ctx: Context) -> dic
     return get_quote_handler(owner(ctx), product_id, size_id, quantity)
 
 
-@mcp.tool(title="Get cart", annotations=annotations(True), meta=APP_CALLABLE, structured_output=True)
+@mcp.tool(
+    title="Get cart",
+    annotations=annotations(True),
+    meta={
+        "ui": {"resourceUri": CART_URI, "visibility": ["model", "app"]},
+        "openai/outputTemplate": CART_URI,
+        "openai/widgetAccessible": True,
+    },
+    structured_output=True,
+)
 def get_cart(ctx: Context) -> dict[str, Any]:
     return get_cart_handler(owner(ctx))
 
@@ -268,15 +350,53 @@ def remove_cart_item(item_id: int, ctx: Context) -> dict[str, Any]:
 
 
 @mcp.tool(title="Prepare mock order", annotations=annotations(False, False), meta=APP_CALLABLE, structured_output=True)
-def prepare_order(shipping_address: str, ctx: Context) -> dict[str, Any]:
-    """Snapshot cart and address into a 15-minute confirmation challenge; ask the user before proceeding."""
-    return prepare_order_handler(owner(ctx), shipping_address)
+def prepare_order(
+    shipping_address: str,
+    ctx: Context,
+    name: str = "",
+    email: str = "",
+) -> dict[str, Any]:
+    """Snapshot cart and address into a 15-minute confirmation challenge; ask the user before proceeding.
+
+    Checkout is the ONE point a shopper is asked who they are -- browsing and
+    the cart are anonymous, exactly like a normal shop. Pass `name` and `email`
+    the first time a guest checks out. A shopper who is already identified
+    needs neither, and must not be asked again.
+
+    A `428 identity_required` reply means the shopper is still a guest: ask for
+    their name and email once, then call this again with them.
+    """
+    return prepare_order_handler(owner(ctx), shipping_address, name, email)
 
 
 @mcp.tool(title="Place or reject mock order", annotations=annotations(False, True), meta=APP_CALLABLE, structured_output=True)
 def place_order(confirmation_token: str, decision: str, ctx: Context) -> dict[str, Any]:
     """Use only after explicit user approval or rejection. Approval writes the backend order; rejection preserves the cart."""
     return place_order_handler(owner(ctx), confirmation_token, decision)
+
+
+@mcp.tool(
+    title="Order history",
+    annotations=annotations(True),
+    meta={
+        "ui": {"resourceUri": ORDERS_URI, "visibility": ["model", "app"]},
+        "openai/outputTemplate": ORDERS_URI,
+        "openai/widgetAccessible": True,
+    },
+    structured_output=True,
+)
+def order_history(ctx: Context, limit: int = 20) -> dict[str, Any]:
+    """The shopper's own past orders, newest first, with their line items.
+
+    Use it for "my orders", "what did I buy", "where is my order", "order
+    history". Scoped to whoever is signed in on this session -- it takes no
+    user id, so it can never be pointed at somebody else's history.
+
+    A `428 identity_required` reply means they are still a guest: a guest has
+    no history, because checkout is the first point an order is attached to a
+    person. Ask which email they ordered with and sign them in.
+    """
+    return order_history_handler(owner(ctx), limit)
 
 
 @mcp.tool(title="Get mock order", annotations=annotations(True), meta=APP_CALLABLE, structured_output=True)
