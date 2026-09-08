@@ -29,6 +29,11 @@ type loginResponse struct {
 	Created bool   `json:"created"`
 }
 
+type adminIdentityRequest struct {
+	Name  string `json:"name"`
+	Email string `json:"email"`
+}
+
 // Login resolves an email to a user id, creating the user when the address is
 // new. This is NOT authentication: no password is taken and nothing is
 // verified. It exists so the custom chat can pick or add a demo user.
@@ -53,6 +58,28 @@ func (s *Server) Login(w http.ResponseWriter, r *http.Request) {
 		Name:    user.Name,
 		IsAdmin: user.IsAdmin,
 		Created: user.Created,
+	})
+}
+
+// VerifyAdminIdentity checks the fixed ops identity and current admin flag
+// against PostgreSQL. MCP calls it before every ops data request.
+func (s *Server) VerifyAdminIdentity(w http.ResponseWriter, r *http.Request) {
+	var req adminIdentityRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+	user, err := s.store.VerifyOpsAdmin(r.Context(), req.Name, req.Email)
+	if errors.Is(err, store.ErrAdminIdentityMismatch) {
+		writeError(w, http.StatusForbidden, CodeForbidden,
+			"The supplied name and email do not match the ops administrator.")
+		return
+	}
+	if err != nil {
+		writeInternal(w, "verify admin identity", err)
+		return
+	}
+	writeJSON(w, http.StatusOK, loginResponse{
+		UserID: user.ID, Email: user.Email, Name: user.Name, IsAdmin: user.IsAdmin,
 	})
 }
 

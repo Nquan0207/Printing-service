@@ -42,7 +42,7 @@ func Load() Config {
 	return Config{
 		Addr:        env("STOCKROOM_ADDR", "127.0.0.1:8080"),
 		DatabaseURL: env("STOCKROOM_DATABASE_URL", "postgresql://raksul:raksul_password@127.0.0.1:5432/stockroom"),
-		AdminEmails: listEnv("STOCKROOM_ADMIN_EMAILS", "admin@stockroom.local"),
+		AdminEmails: listEnv("STOCKROOM_ADMIN_EMAILS", "admin@gmail.com"),
 		ShopEnabled: boolEnv("SHOP_ENABLED", true),
 		LogLevel:    env("STOCKROOM_LOG_LEVEL", "info"),
 		CORSOrigin:  env("STOCKROOM_CORS_ORIGIN", "*"),

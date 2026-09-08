@@ -91,7 +91,10 @@ X-Stockroom-User: 31
 ```
 
 That header matters. On its first call, `_ensure_admin()` POSTs to
-`/api/v1/login` with `admin@stockroom.local`, gets a `user_id`, and caches it.
+`/api/v1/login` with `admin@gmail.com`, gets a `user_id`, and caches it. Every
+ops tool also requires the user to supply exact `admin_name` and `admin_email`
+values. The MCP asks the backend to re-read the matching PostgreSQL row and
+confirm `is_admin = true` before every data request.
 Every later request carries it.
 
 Without it, the Go service falls back to its default user — who is **not** an

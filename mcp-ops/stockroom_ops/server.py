@@ -45,6 +45,30 @@ USERS_URI = "ui://stockroom/users"
 
 STATUSES = ("pending", "confirmed", "cancelled")
 
+ADMIN_EMAIL_FIELD = Field(
+    description=(
+        "Required ops access email. Ask the user to provide it for this request; "
+        "never infer, reuse, or supply it on the user's behalf."
+    )
+)
+ADMIN_NAME_FIELD = Field(
+    description=(
+        "Required ops administrator name. Ask the user to provide it for this "
+        "request; never infer, reuse, or supply it on the user's behalf."
+    )
+)
+
+
+async def verify_ops_identity(
+    api: StockroomApi, admin_name: str, admin_email: str
+) -> dict[str, Any] | None:
+    """Ask the backend to verify both submitted values against PostgreSQL."""
+    try:
+        await api.verify_admin_identity(str(admin_name), str(admin_email))
+    except ApiError as exc:
+        return {"error": {"code": exc.code, "message": str(exc)}}
+    return None
+
 
 def read_only() -> ToolAnnotations:
     return ToolAnnotations(
@@ -172,6 +196,9 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="get_dashboard",
         title="Stockroom dashboard",
         description=(
+            "REQUIRES `admin_name` and `admin_email`, both supplied explicitly by "
+            "the user in this request. If either is absent, ask for both before "
+            "calling. Never guess, remember, or fill them in yourself.\n\n"
             "THE tool for charts, trends and 'how is the shop doing' questions — "
             "'visualise the data', 'show me some charts', 'revenue over time', "
             "'what sells best', 'how are orders trending'.\n\n"
@@ -187,8 +214,13 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         annotations=read_only(),
         structured_output=True,
     )
-    async def get_dashboard(days: int = 30) -> dict[str, Any]:
+    async def get_dashboard(
+        admin_name: Annotated[str, ADMIN_NAME_FIELD],
+        admin_email: Annotated[str, ADMIN_EMAIL_FIELD], days: int = 30
+    ) -> dict[str, Any]:
         """Return dashboard figures for the last `days` days (1-365)."""
+        if refusal := await verify_ops_identity(api, admin_name, admin_email):
+            return refusal
         days = max(1, min(int(days), 365))
         try:
             return await api.stats(days)
@@ -201,6 +233,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="list_orders",
         title="List orders",
         description=(
+            "REQUIRES `admin_name` and `admin_email` supplied explicitly by the "
+            "user in this request. If absent, ask for both; never fill them in.\n\n"
             "THE tool for any question about orders. Returns them newest first "
             "with line items, totals, unit counts and status, and renders as an "
             "interactive panel showing exactly the filters you passed.\n\n"
@@ -227,6 +261,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         structured_output=True,
     )
     async def list_orders(
+        admin_name: Annotated[str, ADMIN_NAME_FIELD],
+        admin_email: Annotated[str, ADMIN_EMAIL_FIELD],
         q: Annotated[
             LooseText,
             Field(
@@ -278,6 +314,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         limit: Annotated[int, Field(default=50, description="Rows to return.")] = 50,
     ) -> dict[str, Any]:
         """List orders, filtered by status, date, total and units ordered."""
+        if refusal := await verify_ops_identity(api, admin_name, admin_email):
+            return refusal
         bad = [s for s in normalize_tokens(status) if s not in STATUSES]
         if bad:
             # Caught here rather than at the API so the message can name the
@@ -316,6 +354,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="list_products",
         title="List products",
         description=(
+            "REQUIRES `admin_name` and `admin_email` supplied explicitly by the "
+            "user in this request. If absent, ask for both; never fill them in.\n\n"
             "THE tool for any request about multiple products, including "
             "'show me category X and Y'. Returns products grouped by category, "
             "each with its full details: sizes, unit prices and image URLs.\n\n"
@@ -330,6 +370,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         structured_output=True,
     )
     async def list_products(
+        admin_name: Annotated[str, ADMIN_NAME_FIELD],
+        admin_email: Annotated[str, ADMIN_EMAIL_FIELD],
         # A plain string, deliberately. A union schema (anyOf array/string/null)
         # makes models omit the argument entirely -- which looked exactly like
         # "the filter is broken".
@@ -355,6 +397,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         ] = True,
     ) -> dict[str, Any]:
         """List products grouped by category, optionally limited to some categories."""
+        if refusal := await verify_ops_identity(api, admin_name, admin_email):
+            return refusal
         # One request. The API resolves the words to slugs, filters in SQL and
         # returns category-first groups, so there is nothing to fetch first and
         # nothing to regroup after.
@@ -371,6 +415,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="get_product",
         title="Get product",
         description=(
+            "REQUIRES `admin_name` and `admin_email` supplied explicitly by the "
+            "user in this request. If absent, ask for both; never fill them in.\n\n"
             "ONE product in full, as its own panel: every photo, the "
             "description, brand, and the S/M/L price ladder.\n\n"
             "Use it when the user points at a single product — 'give me this "
@@ -386,6 +432,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         structured_output=True,
     )
     async def get_product(
+        admin_name: Annotated[str, ADMIN_NAME_FIELD],
+        admin_email: Annotated[str, ADMIN_EMAIL_FIELD],
         product: Annotated[
             LooseText,
             Field(
@@ -397,6 +445,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         ],
     ) -> dict[str, Any]:
         """Return one product, found by catalog id or by name."""
+        if refusal := await verify_ops_identity(api, admin_name, admin_email):
+            return refusal
         text = str(product).strip()
         try:
             if text.isdigit():
@@ -414,6 +464,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="list_users",
         title="List users",
         description=(
+            "REQUIRES `admin_name` and `admin_email` supplied explicitly by the "
+            "user in this request. If absent, ask for both; never fill them in.\n\n"
             "THE tool for any question about accounts or customers. Returns "
             "them with open cart lines, order count and lifetime spend, and "
             "renders as an interactive panel showing exactly the filters you "
@@ -437,6 +489,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         structured_output=True,
     )
     async def list_users(
+        admin_name: Annotated[str, ADMIN_NAME_FIELD],
+        admin_email: Annotated[str, ADMIN_EMAIL_FIELD],
         q: Annotated[
             LooseText,
             Field(default="", description="Free text matched against name and email."),
@@ -476,6 +530,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         limit: Annotated[int, Field(default=50, description="Rows to return.")] = 50,
     ) -> dict[str, Any]:
         """List user accounts, filtered by name, role, activity and spend."""
+        if refusal := await verify_ops_identity(api, admin_name, admin_email):
+            return refusal
         wanted = str(role).strip().lower()
         if wanted not in ("", "admin", "customer"):
             return {
@@ -509,7 +565,11 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         version="0.1.0",
         instructions=(
             "Read-only operations view over a local RAKSUL stockroom PoC. "
-            "The catalog is a fixed crawled snapshot, not live inventory."
+            "The catalog is a fixed crawled snapshot, not live inventory. "
+            "Every tool requires admin_name and admin_email explicitly supplied "
+            "by the user in the current request. If absent, ask for both. Never "
+            "infer, remember, or provide those arguments yourself. The backend "
+            "verifies both values and is_admin against PostgreSQL on every call."
         ),
         extensions=[apps],
     )

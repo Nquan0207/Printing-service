@@ -60,7 +60,7 @@ The crawler is one-shot behind a profile, so it does not start with `up`:
 **host** Ollama at `host.docker.internal:11434`.
 
 **Every port is loopback-bound and must stay that way** — see Identity below.
-Sign in as `alice@stockroom.local` (customer) or `admin@stockroom.local` (admin).
+Sign in as `alice@stockroom.local` (customer) or `admin@gmail.com` (admin).
 
 ## Tests
 

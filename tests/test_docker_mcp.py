@@ -9,16 +9,25 @@ from mcp.client.streamable_http import streamable_http_client
 pytestmark = pytest.mark.skipif(os.getenv('DOCKER_MCP_E2E') != '1', reason='Docker MCP integration only')
 
 
-@pytest.mark.parametrize('url,tool', [('http://mcp:3001/mcp', 'get_dashboard'),
-                                     ('http://shopping-mcp:3003/mcp', 'list_categories')])
-def test_http_mcp_tools_and_views(url, tool):
+@pytest.mark.parametrize(
+    'url,tool,arguments',
+    [
+        (
+            'http://mcp:3001/mcp',
+            'get_dashboard',
+            {'admin_name': 'admin', 'admin_email': 'admin@gmail.com'},
+        ),
+        ('http://shopping-mcp:3003/mcp', 'list_categories', {}),
+    ],
+)
+def test_http_mcp_tools_and_views(url, tool, arguments):
     async def check():
         async with streamable_http_client(url) as (reader, writer, _):
             async with ClientSession(reader, writer) as session:
                 await session.initialize()
                 listed = await session.list_tools()
                 assert tool in {item.name for item in listed.tools}
-                result = await session.call_tool(tool, {})
+                result = await session.call_tool(tool, arguments)
                 assert not result.isError, result
                 resources = await session.list_resources()
                 assert resources.resources

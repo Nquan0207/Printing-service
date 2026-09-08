@@ -63,7 +63,7 @@ services:
       SHOP_ENABLED: "${SHOP_ENABLED:-true}"
       STOCKROOM_LOG_LEVEL: "${STOCKROOM_LOG_LEVEL:-info}"
       STOCKROOM_CORS_ORIGIN: "${STOCKROOM_CORS_ORIGIN:-*}"
-      STOCKROOM_ADMIN_EMAILS: "${STOCKROOM_ADMIN_EMAILS:-admin@stockroom.local}"
+      STOCKROOM_ADMIN_EMAILS: "admin@gmail.com"
     ports: ["127.0.0.1:${API_HOST_PORT:-8080}:8080"]
     restart: unless-stopped
 

@@ -37,6 +37,7 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("GET /healthz", s.Health)
 	mux.HandleFunc("GET /api/v1/config", s.PublicConfig)
 	mux.HandleFunc("POST /api/v1/login", s.Login)
+	mux.HandleFunc("POST /api/v1/admin/verify-identity", s.VerifyAdminIdentity)
 	mux.HandleFunc("GET /api/v1/categories", s.ListCategories)
 	mux.HandleFunc("GET /api/v1/products", s.SearchProducts)
 	mux.HandleFunc("GET /api/v1/products/{id}", s.GetProduct)
