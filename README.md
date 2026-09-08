@@ -132,7 +132,7 @@ Open <http://127.0.0.1:3000> and sign in with an email:
 | Email | Role |
 |---|---|
 | `alice@stockroom.local` | customer — lands on the shop |
-| `admin@stockroom.local` | admin — lands on the dashboard |
+| `admin@gmail.com` | admin — lands on the dashboard |
 
 Any other address creates a new customer account.
 
@@ -208,6 +208,13 @@ Then **fully quit Claude Desktop (⌘Q) and reopen it** — the config is read o
 at launch.
 
 Ask Claude: *"Show me the stockroom dashboard."*
+
+Every ops tool requires the user to provide both name `admin` and email
+`admin@gmail.com` in that request. If either value is missing, Claude must ask
+for both. The backend reads the matching row from PostgreSQL and checks
+`is_admin = true` on every tool call. For example: *"Open the stockroom
+dashboard with name admin and email admin@gmail.com."* This is a demo access
+gate, not real authentication—the name and email are not a password or token.
 
 You should see the `get_dashboard` tool run and a panel render inline with six
 tiles — products, categories, orders, revenue. The 7d/14d/30d/90d buttons inside
@@ -418,7 +425,7 @@ Defaults work with no `.env` file. Override by exporting before
 | Variable | Default | Effect |
 |---|---|---|
 | `SHOP_ENABLED` | `true` | `false` hides the storefront from customers |
-| `STOCKROOM_ADMIN_EMAILS` | `admin@stockroom.local` | Comma-separated; granted admin at startup |
+| `STOCKROOM_ADMIN_EMAILS` | `admin@gmail.com` | Comma-separated; granted admin at startup |
 | `CRAWL_MAX_PRODUCTS` | `70` | Products to fetch |
 | `CRAWL_MAX_CATEGORIES` | `8` | Categories to draw from (of 16) |
 | `STOCKROOM_LOG_LEVEL` | `info` | `debug` also logs `/healthz` and `/media` |
@@ -466,7 +473,7 @@ checks both the API and the configured model in Ollama, not just its TCP port.
 
 **Admin dashboard or MCP tools return 403** — either you signed in as a
 customer, or `init-db` dropped `users` while `api` kept running, so nobody holds
-`is_admin` any more. Sign in as `admin@stockroom.local`, and run
+`is_admin` any more. Sign in as `admin@gmail.com`, and run
 `docker compose restart api` to re-grant admin from `STOCKROOM_ADMIN_EMAILS`.
 
 **Images are broken in the shop** — MinIO is down or the crawl never ran.

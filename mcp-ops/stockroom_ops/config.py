@@ -29,7 +29,9 @@ class Settings:
             # The Go service falls back to Alice when no identity header
             # arrives, and Alice is not an admin -- so every admin call would
             # 403. This account is resolved to an id at startup instead.
-            admin_email=os.getenv("STOCKROOM_ADMIN_EMAIL", "admin@stockroom.local"),
+            # Ops access is intentionally pinned to one exact address. Keep
+            # this in sync with the API's granted admin in docker-compose.yml.
+            admin_email="admin@gmail.com",
             host=os.getenv("MCP_HOST", "127.0.0.1"),
             port=int(os.getenv("MCP_PORT", "3001")),
         )

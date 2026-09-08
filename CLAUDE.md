@@ -48,7 +48,7 @@ with `up`: `docker compose run --rm crawler crawl`.
 | `minio` | 127.0.0.1:9000 / 9001 | private bucket `stockroom-media`, console on 9001 |
 
 **Every port is loopback-bound and must stay that way** — see Identity below.
-Sign in as `alice@stockroom.local` (customer) or `admin@stockroom.local` (admin).
+Sign in as `alice@stockroom.local` (customer) or `admin@gmail.com` (admin).
 
 ## The pieces
 

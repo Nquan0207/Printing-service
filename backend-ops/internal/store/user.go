@@ -19,6 +19,12 @@ const DefaultUserEmail = "alice@stockroom.local"
 const unusablePasswordHash = "!unusable-poc-account!"
 
 var ErrInvalidEmail = errors.New("invalid email")
+var ErrAdminIdentityMismatch = errors.New("admin identity mismatch")
+
+const (
+	OpsAdminName  = "admin"
+	OpsAdminEmail = "admin@gmail.com"
+)
 
 type User struct {
 	ID      int64
@@ -104,6 +110,28 @@ func (s *Store) IsAdmin(ctx context.Context, userID int64) (bool, error) {
 		return false, fmt.Errorf("check admin: %w", err)
 	}
 	return isAdmin, nil
+}
+
+// VerifyOpsAdmin reads the fixed ops identity from the database on every call.
+// Both submitted values and the stored row must match exactly, and the row
+// must still hold admin privilege.
+func (s *Store) VerifyOpsAdmin(ctx context.Context, name, email string) (User, error) {
+	var user User
+	err := s.pool.QueryRow(ctx, `
+		SELECT id, email, name, is_admin, FALSE
+		FROM users
+		WHERE name = $1 AND email = $2
+		  AND name = $3 AND email = $4
+		  AND is_admin = TRUE`,
+		name, email, OpsAdminName, OpsAdminEmail,
+	).Scan(&user.ID, &user.Email, &user.Name, &user.IsAdmin, &user.Created)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return User{}, ErrAdminIdentityMismatch
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("verify ops admin: %w", err)
+	}
+	return user, nil
 }
 
 // GrantAdmin creates the user if needed and marks them admin. Called only at

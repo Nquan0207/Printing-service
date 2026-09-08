@@ -61,6 +61,16 @@ class StockroomApi:
             log.info("acting as %s (user_id=%s)", self._admin_email, self._user_id)
         return self._user_id
 
+    async def verify_admin_identity(self, name: str, email: str) -> None:
+        """Re-read the submitted ops identity and admin flag from PostgreSQL."""
+        data = await self._request(
+            "POST",
+            "/api/v1/admin/verify-identity",
+            json={"name": name, "email": email},
+            identify=False,
+        )
+        self._user_id = int(data["user_id"])
+
     async def _request(
         self, method: str, path: str, *, identify: bool = True, **kwargs: Any
     ) -> Any:
