@@ -8,11 +8,15 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 
-<<<<<<< Updated upstream
+# Withheld from the model. Not a preference -- each of these breaks something
+# if the model can reach it:
+#   place_order     the confirm gate; only the Approve/Reject buttons may call it
+#   mock_sign_in    chat-host signs in itself, from POST /api/session/login
+#   sign_out        chat-host owns the browser session; a model-driven MCP
+#                   sign-out would desync it from the host's idea of who is here
+#   open_storefront renders the ui:// storefront panel, which chat-ui does not
+#                   display -- it has its own UI
 MODEL_BLOCKED_TOOLS = {"mock_sign_in", "sign_out", "open_storefront", "place_order"}
-=======
-MODEL_BLOCKED_TOOLS = {"mock_sign_in", "place_order"}
->>>>>>> Stashed changes
 
 
 def ollama_tools(tools: list[Any]) -> list[dict[str, Any]]:

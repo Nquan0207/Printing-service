@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Group, Image, Table, Text } from "@mantine/core";
+import { AUTH_REQUIRED, AdminGate, AdminSession, isAuthRequired, needsPasscode } from "../components/AdminGate";
 import { ErrorPanel, Shell } from "../components/Shell";
 import { createApp, readResult } from "../lib/mcp";
 import { yen } from "../lib/format";
@@ -12,6 +13,7 @@ type Product = {
    *  silently resolved: picking one row out of eight is how you show the
    *  wrong product. */
   other_matches?: { id: number; name: string }[];
+  admin?: { email: string; name?: string } | null;
 };
 
 const app = createApp("Product");
@@ -25,12 +27,22 @@ export default function Product() {
   }, []);
 
   if (!p) return <Shell title="Product" sub="Loading…">{null}</Shell>;
-  if (p.error) return <Shell title="Product" sub=""><ErrorPanel error={p.error} /></Shell>;
+  if (p.error)
+    return (
+      <Shell title="Product" sub="">
+        {isAuthRequired(p)
+          // The product View has no fetch of its own: the model opened it, so
+          // signing in here just clears the gate and asks the user to re-run.
+          ? <AdminGate app={app} onSignedIn={() => setP(null)} passcodeRequired={needsPasscode(p)} />
+          : <ErrorPanel error={p.error} />}
+      </Shell>
+    );
   if (!p.id) return <Shell title="Product" sub=""><Text size="sm" c="dimmed">No product returned.</Text></Shell>;
 
   return (
     <Shell
       title="Product"
+      right={<AdminSession app={app} admin={p.admin} onSignedOut={() => setP(AUTH_REQUIRED)} />}
       sub={`#${p.id} · ${p.category?.name ?? ""}${p.brand ? ` · ${p.brand}` : ""}`}
     >
       {/* Images are absolute URLs at the Go service; the View's CSP names that

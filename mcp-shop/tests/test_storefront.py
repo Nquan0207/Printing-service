@@ -118,7 +118,10 @@ def test_confirmation_expiry_and_cart_change(monkeypatch):
 
 
 def test_widget_is_embedded_and_has_no_supplier_navigation():
-    for marker in ("tools/call", "ui/initialize", "Approve mock order", "Reject mock order", "Mock receipt", "Stockroom backend"):
+    # The confirm gate is what this guards: an Approve/Reject pair the shopper
+    # must press, and a receipt afterwards. The wording lost the word "mock" --
+    # the "no real payment" statement lives in the panel's notice instead.
+    for marker in ("tools/call", "ui/initialize", "Approve order", "Reject order", "Receipt", "Stockroom backend"):
         assert marker in STOREFRONT_HTML
     assert "window.open(" not in STOREFRONT_HTML
     assert "raksul.com" not in STOREFRONT_HTML
