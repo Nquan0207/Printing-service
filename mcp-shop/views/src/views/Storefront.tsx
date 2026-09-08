@@ -78,7 +78,10 @@ function ProductCard({ product, busy, onAdd }: {
   const image = safeImageUrl(product.images?.[0]);
 
   return (
-    <Card padding="sm">
+    // h=100% so every card fills its grid row: SimpleGrid stretches its
+    // children, and a flex column lets the controls sit at the bottom
+    // regardless of how many lines the product name took.
+    <Card padding="sm" h="100%" style={{ display: "flex", flexDirection: "column" }}>
       <Card.Section>
         {image ? (
           <Image src={image} alt="" h={130} fit="contain" bg="var(--mantine-color-default-hover)" />
@@ -88,10 +91,26 @@ function ProductCard({ product, busy, onAdd }: {
           </Center>
         )}
       </Card.Section>
-      <Stack gap={5} mt="xs">
-        <Text fw={600} size="sm" lineClamp={2} title={product.name}>{product.name}</Text>
-        <Text size="xs" c="dimmed">{product.category?.name || product.brand || ""}</Text>
-        <Text fw={800}>From {yen(product.base_price_jpy)}</Text>
+      <Stack gap={5} mt="xs" style={{ flex: 1 }}>
+        {/* Two lines reserved whether the name needs them or not, so the price
+            and the controls below start at the same height on every card. */}
+        <Text
+          fw={600}
+          size="sm"
+          lineClamp={2}
+          title={product.name}
+          style={{ minHeight: "2.6em" }}
+        >
+          {product.name}
+        </Text>
+        {/* Category names wrap at narrow widths, which would reintroduce the
+            same misalignment one row further down. */}
+        <Text size="xs" c="dimmed" lineClamp={1} style={{ minHeight: "1.3em" }}>
+          {product.category?.name || product.brand || ""}
+        </Text>
+        {/* Bottom-aligned, so anything unexpected above it cannot drift the
+            price/size/button block out of line with the neighbouring card. */}
+        <Text fw={800} mt="auto">From {yen(product.base_price_jpy)}</Text>
         <Group gap={6} grow wrap="nowrap">
           {/* A native select: Mantine's Select renders a portal-ed dropdown,
               which is awkward inside a short auto-resized iframe. */}
