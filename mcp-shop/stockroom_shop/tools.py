@@ -192,6 +192,10 @@ def list_categories_handler(): return run(lambda: success(**CLIENT.categories())
 def get_quote_handler(owner_key: str, product_id: int, size_id: int, quantity: int): return run(lambda: success(quote=CLIENT.quote(product_id, size_id, quantity, STATE.user_id(owner_key)), owner_key=owner_key))
 def get_cart_handler(owner_key: str): return run(lambda: success(cart=CLIENT.cart(cart_user_id(owner_key)), owner_key=owner_key))
 def add_to_cart_handler(owner_key: str, product_id: int, size_id: int, quantity: int): return run(lambda: success(cart=CLIENT.add_to_cart(product_id, size_id, quantity, cart_user_id(owner_key)), owner_key=owner_key))
+def update_cart_item_handler(owner_key: str, item_id: int, size_id: int, quantity: int):
+    return run(lambda: success(cart=CLIENT.update_cart_item(item_id, size_id, quantity, STATE.user_id(owner_key))))
+
+
 def remove_cart_item_handler(owner_key: str, item_id: int): return run(lambda: success(cart=CLIENT.remove_cart_item(item_id, cart_user_id(owner_key)), owner_key=owner_key))
 
 

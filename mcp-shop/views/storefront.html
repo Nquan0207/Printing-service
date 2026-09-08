@@ -6,6 +6,32 @@
     <title>RAKSUL Stockroom</title>
     <style>
       body { margin: 0; }
+
+      /* Two columns that do NOT wrap.
+         A flex row with bases of 380 + 320 needs ~716px; the host panel is
+         narrower than that, so the cart wrapped underneath the products and no
+         amount of `position: sticky` could pin it -- there was nothing beside
+         the grid to stick to. Grid holds the second column open instead, and
+         only collapses when the frame really is too narrow for two. */
+      .shop-layout {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) 260px;
+        gap: 14px;
+        align-items: start;
+      }
+
+      /* The cart sits at the top of its column and stays there: the products
+         beside it are the only thing that scrolls. */
+      .shop-cart {
+        position: sticky;
+        top: 0;
+      }
+
+      @media (max-width: 560px) {
+        .shop-layout { grid-template-columns: 1fr; }
+        /* Stacked, the cart goes first so it is still the top of the frame. */
+        .shop-cart { order: -1; position: static; }
+      }
     </style>
   </head>
   <body>

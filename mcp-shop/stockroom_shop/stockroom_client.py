@@ -101,6 +101,11 @@ class StockroomClient:
             )
         )
 
+    def update_cart_item(self, item_id: int, size_id: int, quantity: int, user_id: int | None = None):
+        return self._public_images(self._request(
+            "PATCH", f"/api/v1/cart/items/{item_id}",
+            json={"size_id": size_id, "quantity": quantity}, user_id=user_id))
+
     def remove_cart_item(self, item_id: int, user_id: int | None = None):
         return self._public_images(self._request("DELETE", f"/api/v1/cart/items/{item_id}", user_id=user_id))
 

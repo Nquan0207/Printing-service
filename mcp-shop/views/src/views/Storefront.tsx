@@ -14,7 +14,18 @@ type Product = {
 };
 type Category = { id: number; slug: string; name: string; product_count: number };
 type Group = { category: { slug: string; name: string }; count: number; products: Product[] };
-type CartItem = { id: number; product_name: string; size_name: string; quantity: number; subtotal_jpy: number };
+type CartItem = {
+  id: number;
+  product_name: string;
+  size_id: number;
+  size_name: string;
+  quantity: number;
+  unit_price_jpy: number;
+  subtotal_jpy: number;
+  /** Every size this product offers, cheapest first — sent with the cart so a
+   *  size can be switched here without fetching the product again. */
+  sizes: { id: number; size_name: string; unit_price_jpy: number }[];
+};
 type Cart = { items: CartItem[]; item_count: number; total_jpy: number };
 type User = { name: string; email: string };
 type Confirmation = { token: string; shipping_address: string };
@@ -22,6 +33,19 @@ type Order = { order_number: string; total_jpy: number };
 
 /** Products per page inside a category. */
 const PAGE_SIZE = 12;
+/**
+ * Height of the scrolling product column, in px.
+ *
+ * A View auto-resizes to its content, so the iframe never scrolls -- the
+ * conversation around it does. That leaves `position: sticky` nothing to stick
+ * to. Giving the product column its own fixed-height scroll region makes it
+ * the only thing that moves, which is what keeps the cart beside it fixed in
+ * place while you page, scroll, or switch category.
+ *
+ * Fixed rather than a max: with `max-height` the column would shrink for a
+ * small category and the cart would jump up with it.
+ */
+const BROWSE_HEIGHT = 560;
 /** The Go API caps a request at 100 products; the largest category holds 34,
  *  so one call always fetches a whole category and paging stays client-side. */
 const CATEGORY_FETCH_LIMIT = 100;
@@ -100,6 +124,84 @@ function ProductCard({ product, busy, onAdd }: {
         </Button>
       </Stack>
     </Card>
+  );
+}
+
+/**
+ * One editable cart line.
+ *
+ * Size and quantity are local state until they are committed, so the select
+ * and the stepper stay responsive while the round trip is in flight. The
+ * server owns the arithmetic: the price shown is whatever came back with the
+ * cart, never computed here.
+ */
+function CartLine({
+  item, busy, onUpdate, onRemove,
+}: {
+  item: CartItem;
+  busy: boolean;
+  onUpdate: (itemId: number, sizeId: number, quantity: number) => void;
+  onRemove: (itemId: number) => void;
+}) {
+  const [sizeId, setSizeId] = useState(String(item.size_id));
+  const [quantity, setQuantity] = useState(item.quantity);
+
+  // A merge elsewhere in the cart can change this line under us, so follow the
+  // server rather than keeping stale local values.
+  useEffect(() => {
+    setSizeId(String(item.size_id));
+    setQuantity(item.quantity);
+  }, [item.size_id, item.quantity]);
+
+  const commit = (nextSize: string, nextQty: number) => {
+    if (Number(nextSize) === item.size_id && nextQty === item.quantity) return;
+    onUpdate(item.id, Number(nextSize), nextQty);
+  };
+
+  const sizes = item.sizes ?? [];
+
+  return (
+    <div>
+      <Text size="sm" fw={600} lineClamp={2}>{item.product_name}</Text>
+      <Group gap={6} wrap="nowrap" mt={4}>
+        <select
+          aria-label="Size"
+          value={sizeId}
+          disabled={busy || sizes.length === 0}
+          onChange={(e) => {
+            setSizeId(e.currentTarget.value);
+            commit(e.currentTarget.value, quantity);
+          }}
+          style={{
+            font: "inherit", fontSize: 11, padding: "3px 6px", borderRadius: 6,
+            flex: 1, minWidth: 0,
+            border: "1px solid var(--mantine-color-default-border)",
+            background: "var(--mantine-color-body)", color: "inherit",
+          }}
+        >
+          {sizes.length === 0 && <option value={item.size_id}>{item.size_name}</option>}
+          {sizes.map((s) => (
+            <option key={s.id} value={s.id}>{s.size_name} · {yen(s.unit_price_jpy)}</option>
+          ))}
+        </select>
+        <NumberInput
+          size="xs" aria-label="Quantity" min={1} max={100} clampBehavior="strict"
+          w={64} disabled={busy}
+          value={quantity}
+          onChange={(v) => setQuantity(typeof v === "number" ? v : 1)}
+          // Commit on blur and on Enter, not on every keystroke: one round
+          // trip per edit rather than one per digit.
+          onBlur={() => commit(sizeId, quantity)}
+          onKeyDown={(e) => e.key === "Enter" && commit(sizeId, quantity)}
+        />
+      </Group>
+      <Group justify="space-between" mt={2}>
+        <Text size="sm" fw={600}>{yen(item.subtotal_jpy)}</Text>
+        <Anchor component="button" type="button" size="xs" c="red" onClick={() => onRemove(item.id)}>
+          Remove
+        </Anchor>
+      </Group>
+    </div>
   );
 }
 
@@ -241,6 +343,19 @@ export default function Storefront() {
       setMessage({ text: "Added to the database cart." });
     });
 
+  /** Reprice a line in place. The server returns the whole cart, so the total
+   *  comes back correct rather than being recomputed here. */
+  const updateLine = (itemId: number, sizeId: number, quantity: number) =>
+    run(
+      () => callTool("update_cart_item", { item_id: itemId, size_id: sizeId, quantity }),
+      (out) => {
+        seedCommerce(out);
+        // A cart edit invalidates any confirmation snapshot taken before it.
+        setConfirmation(null);
+        setOrder(null);
+      },
+    );
+
   const removeLine = (itemId: number) =>
     run(() => callTool("remove_cart_item", { item_id: itemId }), (out) => {
       seedCommerce(out);
@@ -370,8 +485,17 @@ export default function Storefront() {
             <Text size="xs" c={message.bad ? "red" : "dimmed"}>{message.text}</Text>
           )}
 
-          <Group align="flex-start" gap="md" wrap="wrap">
-            <Stack gap="xs" style={{ flex: "1 1 380px", minWidth: 0 }}>
+          <div className="shop-layout">
+            <Stack
+              gap="xs"
+              style={{
+                minWidth: 0,
+                height: BROWSE_HEIGHT,
+                overflowY: "auto",
+                // Room for the scrollbar so it never sits on the cards.
+                paddingRight: 6,
+              }}
+            >
               {/* Order history loads only once it is asked for -- a shopper
                   browsing the catalog should not pay for a query they never
                   looked at. */}
@@ -413,7 +537,12 @@ export default function Storefront() {
               )}
             </Stack>
 
-            <Paper p="md" radius="md" style={{ flex: "0 1 320px", minWidth: 260 }}>
+            <Paper
+              className="shop-cart"
+              p="sm"
+              radius="md"
+              style={{ maxHeight: BROWSE_HEIGHT, overflowY: "auto" }}
+            >
               <Title order={2} size="h5">Cart · {cart?.item_count ?? 0}</Title>
               {!cart ? (
                 <Text size="xs" c="dimmed" mt="xs">Loading database cart…</Text>
@@ -421,15 +550,13 @@ export default function Storefront() {
                 <Stack gap="xs" mt="xs">
                   {cart.items.length === 0 && <Text size="xs" c="dimmed">Empty cart.</Text>}
                   {cart.items.map((item) => (
-                    <div key={item.id}>
-                      <Text size="sm" fw={600}>{item.product_name}</Text>
-                      <Text size="xs" c="dimmed">{item.size_name} · {item.quantity}</Text>
-                      <Group justify="space-between">
-                        <Text size="sm">{yen(item.subtotal_jpy)}</Text>
-                        <Anchor component="button" type="button" size="xs" c="red"
-                          onClick={() => removeLine(item.id)}>Remove</Anchor>
-                      </Group>
-                    </div>
+                    <CartLine
+                      key={item.id}
+                      item={item}
+                      busy={busy}
+                      onUpdate={updateLine}
+                      onRemove={removeLine}
+                    />
                   ))}
                   <Group justify="space-between">
                     <Text fw={800}>Total</Text>
@@ -482,7 +609,7 @@ export default function Storefront() {
                 </Alert>
               )}
             </Paper>
-          </Group>
+          </div>
         </>
       )}
     </Stack>

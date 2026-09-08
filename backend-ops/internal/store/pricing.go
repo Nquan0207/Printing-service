@@ -22,11 +22,27 @@ type PricedSize struct {
 	UnitPriceJPY int
 }
 
+// querier is the shared surface of *pgxpool.Pool and pgx.Tx, so a lookup can
+// run either on its own or inside someone else's transaction.
+type querier interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
 // PricedSize resolves a product/size pair, verifying the size actually belongs
 // to that product.
 func (s *Store) PricedSize(ctx context.Context, productID, sizeID int64) (*PricedSize, error) {
+	return pricedSize(ctx, s.pool, productID, sizeID)
+}
+
+// pricedSizeTx is the same check inside a caller's transaction, so a size can
+// be validated against a row that transaction has locked.
+func pricedSizeTx(ctx context.Context, tx pgx.Tx, productID, sizeID int64) (*PricedSize, error) {
+	return pricedSize(ctx, tx, productID, sizeID)
+}
+
+func pricedSize(ctx context.Context, q querier, productID, sizeID int64) (*PricedSize, error) {
 	out := PricedSize{ProductID: productID, SizeID: sizeID}
-	err := s.pool.QueryRow(ctx, `
+	err := q.QueryRow(ctx, `
 		SELECT p.name, ps.size_name, p.base_price_jpy + ps.price_adjustment_jpy
 		FROM products p
 		JOIN product_sizes ps ON ps.product_id = p.id
@@ -38,7 +54,7 @@ func (s *Store) PricedSize(ctx context.Context, productID, sizeID int64) (*Price
 		// No match could mean either input was wrong; tell them apart so the
 		// caller gets product_not_found vs size_not_found correctly.
 		var exists bool
-		if err := s.pool.QueryRow(ctx,
+		if err := q.QueryRow(ctx,
 			`SELECT EXISTS (SELECT 1 FROM products WHERE id = $1 AND is_active)`,
 			productID,
 		).Scan(&exists); err != nil {

@@ -33,6 +33,7 @@ from stockroom_shop.tools import (
     place_order_handler,
     prepare_order_handler,
     remove_cart_item_handler,
+    update_cart_item_handler,
     search_products_handler,
 )
 
@@ -347,6 +348,17 @@ def add_to_cart(product_id: int, size_id: int, quantity: int, ctx: Context) -> d
 @mcp.tool(title="Remove cart item", annotations=annotations(False, True), meta=APP_CALLABLE, structured_output=True)
 def remove_cart_item(item_id: int, ctx: Context) -> dict[str, Any]:
     return remove_cart_item_handler(owner(ctx), item_id)
+
+
+@mcp.tool(title="Update cart item", annotations=annotations(False, True), meta=APP_CALLABLE, structured_output=True)
+def update_cart_item(item_id: int, size_id: int, quantity: int, ctx: Context) -> dict[str, Any]:
+    """Change one cart line's size and quantity, repricing it from the catalog.
+
+    Switching to a size the cart already holds for that product merges the two
+    lines rather than failing: one line per (product, size) is a database
+    constraint, not a rule the shopper should have to know about.
+    """
+    return update_cart_item_handler(owner(ctx), item_id, size_id, quantity)
 
 
 @mcp.tool(title="Prepare mock order", annotations=annotations(False, False), meta=APP_CALLABLE, structured_output=True)
