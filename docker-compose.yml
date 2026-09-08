@@ -139,14 +139,7 @@ services:
     environment:
       STOCKROOM_API_URL: http://api:8080
       SHOPPING_MCP_URL: http://shopping-mcp:3003
-<<<<<<< Updated upstream
-      # Defaults to an Ollama on the host (Metal GPU). Set OLLAMA_URL to
-      # http://ollama:11434 with --profile docker-ollama to keep it in Docker.
       OLLAMA_URL: "${OLLAMA_URL:-http://host.docker.internal:11434}"
-=======
-      OPS_MCP_URL: http://mcp:3001/mcp
-      OLLAMA_URL: http://host.docker.internal:11434
->>>>>>> Stashed changes
       OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen3:8b}"
       OLLAMA_TIMEOUT_SECONDS: "${OLLAMA_TIMEOUT_SECONDS:-600}"
       CHAT_SESSION_TTL_SECONDS: "${CHAT_SESSION_TTL_SECONDS:-86400}"

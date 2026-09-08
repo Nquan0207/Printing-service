@@ -235,12 +235,8 @@ def prepare_order_handler(owner_key: str, shipping_address: str, name: str = "",
         token = secrets.token_urlsafe(32)
         confirmation = Confirmation(token, owner_key, STATE.user_id(owner_key), address, _cart_digest(cart), utcnow() + timedelta(minutes=15))
         with STATE.lock: STATE.confirmations[token] = confirmation
-<<<<<<< Updated upstream
-        return {"status": "confirmation_required", "user": _public_user(owner_key), "cart": cart, "confirmation": {"token": token, "expires_at": confirmation.expires_at.isoformat(), "shipping_address": address}, "message": "Ask the user to explicitly approve or reject this mock order before calling place_order.", "scope": SCOPE}
-=======
         _confirmation_log("prepared", token, owner_key)
-        return {"status": "confirmation_required", "cart": cart, "confirmation": {"token": token, "expires_at": confirmation.expires_at.isoformat(), "shipping_address": address}, "message": "Ask the user to explicitly approve or reject this mock order before calling place_order.", "scope": SCOPE}
->>>>>>> Stashed changes
+        return {"status": "confirmation_required", "user": _public_user(owner_key), "cart": cart, "confirmation": {"token": token, "expires_at": confirmation.expires_at.isoformat(), "shipping_address": address}, "message": "Ask the user to explicitly approve or reject this mock order before calling place_order.", "scope": SCOPE}
     return run(action)
 
 
