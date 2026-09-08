@@ -417,9 +417,9 @@ export default function Storefront() {
         if (decision === "approve") {
           setOrder(out.order);
           setCart({ items: [], item_count: 0, total_jpy: 0 });
-          setMessage({ text: "Mock order stored in the Stockroom database." });
+          setMessage({ text: "Order stored in the Stockroom database." });
         } else {
-          setMessage({ text: "Rejected. Database cart preserved." });
+          setMessage({ text: "Rejected. Your cart was kept." });
         }
       },
     );
@@ -450,7 +450,6 @@ export default function Storefront() {
             My orders
           </Button>
         </Group>
-        <Badge color="raksul" variant="light">DATABASE MOCK</Badge>
       </Group>
 
       <Text size="xs" c="dimmed">
@@ -572,12 +571,11 @@ export default function Storefront() {
               style={{ maxHeight: BROWSE_HEIGHT, overflowY: "auto" }}
             >
               <Title order={2} size="h5">Cart · {cart?.item_count ?? 0}</Title>
-              {!cart ? (
-                <Text size="xs" c="dimmed" mt="xs">Loading database cart…</Text>
-              ) : (
-                <Stack gap="xs" mt="xs">
-                  {cart.items.length === 0 && <Text size="xs" c="dimmed">Empty cart.</Text>}
-                  {cart.items.map((item) => (
+              <Stack gap="xs" mt="xs">
+                  {(cart?.items.length ?? 0) === 0 && (
+                    <Text size="xs" c="dimmed">Your cart is empty.</Text>
+                  )}
+                  {(cart?.items ?? []).map((item) => (
                     <CartLine
                       key={item.id}
                       item={item}
@@ -588,9 +586,9 @@ export default function Storefront() {
                   ))}
                   <Group justify="space-between">
                     <Text fw={800}>Total</Text>
-                    <Text fw={800}>{yen(cart.total_jpy)}</Text>
+                    <Text fw={800}>{yen(cart?.total_jpy ?? 0)}</Text>
                   </Group>
-                  <TextInput size="xs" placeholder="Mock shipping address" value={address}
+                  <TextInput size="xs" placeholder="Shipping address" value={address}
                     onChange={(e) => setAddress(e.currentTarget.value)} />
                   {!user && (
                     <>
@@ -605,32 +603,31 @@ export default function Storefront() {
                   )}
                   <Button
                     size="xs"
-                    disabled={busy || !cart.items.length || (!user && !email.trim())}
+                    disabled={busy || !cart?.items.length || (!user && !email.trim())}
                     onClick={prepare}
                   >
-                    Review mock order
+                    Review order
                   </Button>
-                </Stack>
-              )}
+              </Stack>
 
               {confirmation && (
-                <Alert color="raksul" variant="light" mt="sm" title="Explicit mock confirmation">
+                <Alert color="raksul" variant="light" mt="sm" title="Confirm your order">
                   <Text size="xs">Address: {confirmation.shipping_address}</Text>
                   <Text size="xs">Total: {yen(cart?.total_jpy)}</Text>
                   {/* place_order is withheld from the model; only these reach it. */}
                   <Stack gap={6} mt="xs">
                     <Button size="xs" color="green" onClick={() => decide("approve")}>
-                      Approve mock order
+                      Approve order
                     </Button>
                     <Button size="xs" variant="light" color="red" onClick={() => decide("reject")}>
-                      Reject mock order
+                      Reject order
                     </Button>
                   </Stack>
                 </Alert>
               )}
 
               {order && (
-                <Alert color="green" variant="light" mt="sm" title="Mock receipt">
+                <Alert color="green" variant="light" mt="sm" title="Receipt">
                   <Text size="xs">{order.order_number}</Text>
                   <Text size="xs" fw={700}>Total {yen(order.total_jpy)}</Text>
                   <Text size="xs" c="dimmed">No money moved.</Text>
