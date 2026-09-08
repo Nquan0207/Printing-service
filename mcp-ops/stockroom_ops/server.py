@@ -139,6 +139,7 @@ def with_admin(payload: dict[str, Any], owner_key: str) -> dict[str, Any]:
 
 def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
     adminauth.set_ttl(settings.admin_session_ttl_seconds)
+    adminauth.set_require_passcode(settings.admin_require_passcode)
     apps = Apps()
     api = StockroomApi(settings.api_base, settings.admin_email)
 
@@ -555,32 +556,45 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="admin_sign_in",
         title="Admin sign in",
         description=(
-            "Verify an administrator email and passcode for THIS connection. "
-            "Called by the sign-in form inside the panel, never by the model."
+            "Verify an administrator email — and a passcode when this server "
+            "requires one — for THIS connection. Called by the sign-in form "
+            "inside the panel, never by the model."
         ),
         annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
                                     idempotentHint=True, openWorldHint=False),
         structured_output=True,
     )
-    async def admin_sign_in(ctx: Context, email: str, passcode: str) -> dict[str, Any]:
+    async def admin_sign_in(
+        ctx: Context, email: str, passcode: str = ""
+    ) -> dict[str, Any]:
         """Sign in as an administrator on this connection."""
         owner_key = adminauth.owner(ctx)
         address = (email or "").strip().lower()
+        # One message whichever half was wrong: which it was is not something
+        # an attacker should learn.
+        refusal = {
+            "error": {
+                "code": "invalid_credentials",
+                "message": (
+                    "That email and passcode do not match an administrator."
+                    if adminauth.require_passcode()
+                    else "That email is not an administrator."
+                ),
+            }
+        }
 
-        if not adminauth.passcode_ok(passcode or "", settings.admin_passcode):
-            # One message for a bad passcode and for a non-admin address: which
-            # half was wrong is not something an attacker should learn.
+        if adminauth.require_passcode() and not adminauth.passcode_ok(
+            passcode or "", settings.admin_passcode
+        ):
             log.warning("admin sign-in refused for %r", address or "(no email)")
-            return {"error": {"code": "invalid_credentials",
-                              "message": "That email and passcode do not match an administrator."}}
+            return refusal
         try:
             account = await api.resolve(address)
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
         if not account.get("is_admin"):
             log.warning("admin sign-in refused for %r (not an admin)", address)
-            return {"error": {"code": "invalid_credentials",
-                              "message": "That email and passcode do not match an administrator."}}
+            return refusal
 
         return {"status": "ok", "admin": adminauth.sign_in(owner_key, account)}
 

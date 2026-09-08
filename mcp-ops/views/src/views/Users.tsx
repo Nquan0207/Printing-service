@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Group, Table, Text, TextInput } from "@mantine/core";
-import { AUTH_REQUIRED, AdminGate, AdminSession, isAuthRequired } from "../components/AdminGate";
+import { AUTH_REQUIRED, AdminGate, AdminSession, isAuthRequired, needsPasscode } from "../components/AdminGate";
 import { ErrorPanel, Shell } from "../components/Shell";
 import { createApp, readResult } from "../lib/mcp";
 import { asDate, yen } from "../lib/format";
@@ -107,7 +107,7 @@ export default function Users() {
     return (
       <Shell title="Users" sub="">
         {isAuthRequired(data)
-          ? <AdminGate app={app} onSignedIn={() => refetch(applied)} />
+          ? <AdminGate app={app} onSignedIn={() => refetch(applied)} passcodeRequired={needsPasscode(data)} />
           : <ErrorPanel error={data.error} />}
       </Shell>
     );

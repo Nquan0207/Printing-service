@@ -36,9 +36,30 @@ _ttl_seconds = 60.0
 _EXPIRED: dict[str, float] = {}
 
 
+# Whether a passcode is demanded alongside the admin email. Off by default:
+# this is a demo surface, and the Go API it fronts already treats anyone who
+# can reach the port as admin. `passcode_ok` below is unchanged and still fails
+# closed -- turning the check off is this flag, never an empty passcode.
+_require_passcode = False
+
+
 def set_ttl(seconds: float) -> None:
     global _ttl_seconds
     _ttl_seconds = max(1.0, float(seconds))
+
+
+def set_require_passcode(enabled: bool) -> None:
+    global _require_passcode
+    _require_passcode = bool(enabled)
+    if not enabled:
+        log.warning(
+            "admin passcode check is OFF: an administrator email alone signs in. "
+            "Set STOCKROOM_ADMIN_REQUIRE_PASSCODE=true to require one."
+        )
+
+
+def require_passcode() -> bool:
+    return _require_passcode
 
 
 def set_stdio(enabled: bool) -> None:
@@ -145,24 +166,25 @@ def passcode_ok(presented: str, expected: str) -> bool:
     return hmac.compare_digest(presented, expected)
 
 
-AUTH_REQUIRED = {
-    "error": {
-        "code": "auth_required",
-        "message": "Sign in with an administrator email and passcode to view this.",
-    }
-}
+def _credentials() -> str:
+    return "email and passcode" if _require_passcode else "email"
 
 
 def auth_required(owner_key: str) -> dict[str, Any]:
-    """The refusal, saying whether this was a timeout or never signed in."""
+    """The refusal, saying whether this was a timeout or never signed in.
+
+    `passcode_required` travels with it so the sign-in panel renders the fields
+    this server will actually check, rather than asking for a credential that
+    is ignored.
+    """
     if just_expired(owner_key):
-        return {
-            "error": {
-                "code": "auth_required",
-                "message": (
-                    f"Signed out after {int(_ttl_seconds)}s of inactivity. "
-                    "Sign in again to continue."
-                ),
-            }
-        }
-    return AUTH_REQUIRED
+        message = (
+            f"Signed out after {int(_ttl_seconds)}s of inactivity. "
+            "Sign in again to continue."
+        )
+    else:
+        message = f"Sign in with an administrator {_credentials()} to view this."
+    return {
+        "error": {"code": "auth_required", "message": message},
+        "passcode_required": _require_passcode,
+    }

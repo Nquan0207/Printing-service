@@ -19,7 +19,23 @@ export function isAuthRequired(payload: { error?: { code: string } } | null | un
   return payload?.error?.code === "auth_required";
 }
 
-export function AdminGate({ app, onSignedIn }: { app: App; onSignedIn: () => void }) {
+/**
+ * Does this server want a passcode as well as an email?
+ *
+ * It travels on the refusal, so the form asks for exactly what will be checked
+ * rather than for a credential the server ignores. Absent means no.
+ */
+export function needsPasscode(payload: { passcode_required?: boolean } | null | undefined) {
+  return payload?.passcode_required === true;
+}
+
+export function AdminGate({
+  app, onSignedIn, passcodeRequired = false,
+}: {
+  app: App;
+  onSignedIn: () => void;
+  passcodeRequired?: boolean;
+}) {
   const [email, setEmail] = useState("");
   const [passcode, setPasscode] = useState("");
   const [busy, setBusy] = useState(false);
@@ -32,7 +48,11 @@ export function AdminGate({ app, onSignedIn }: { app: App; onSignedIn: () => voi
       const out = readResult<{ status?: string }>(
         await app.callServerTool({
           name: "admin_sign_in",
-          arguments: { email: email.trim(), passcode },
+          // Omitted entirely when unused, so an unchecked credential is never
+          // put on the wire.
+          arguments: passcodeRequired
+            ? { email: email.trim(), passcode }
+            : { email: email.trim() },
         }),
       );
       if (out.error) {
@@ -54,7 +74,9 @@ export function AdminGate({ app, onSignedIn }: { app: App; onSignedIn: () => voi
       <Stack gap="xs">
         <Title order={2} size="h5">Administrator sign-in</Title>
         <Text size="xs" c="dimmed">
-          These operations are restricted. Sign in to view them.
+          {passcodeRequired
+            ? "These operations are restricted. Sign in to view them."
+            : "These operations are restricted. An administrator email is enough on this server."}
         </Text>
 
         <TextInput
@@ -65,18 +87,25 @@ export function AdminGate({ app, onSignedIn }: { app: App; onSignedIn: () => voi
           onChange={(e) => setEmail(e.currentTarget.value)}
           onKeyDown={(e) => e.key === "Enter" && submit()}
         />
-        <PasswordInput
-          size="xs"
-          label="Passcode"
-          value={passcode}
-          onChange={(e) => setPasscode(e.currentTarget.value)}
-          onKeyDown={(e) => e.key === "Enter" && submit()}
-        />
+        {passcodeRequired && (
+          <PasswordInput
+            size="xs"
+            label="Passcode"
+            value={passcode}
+            onChange={(e) => setPasscode(e.currentTarget.value)}
+            onKeyDown={(e) => e.key === "Enter" && submit()}
+          />
+        )}
 
         {error && <Alert color="red" variant="light">{error}</Alert>}
 
         <Group justify="flex-end">
-          <Button size="xs" loading={busy} disabled={!email.trim() || !passcode} onClick={submit}>
+          <Button
+            size="xs"
+            loading={busy}
+            disabled={!email.trim() || (passcodeRequired && !passcode)}
+            onClick={submit}
+          >
             Sign in
           </Button>
         </Group>
@@ -90,7 +119,7 @@ export function AdminGate({ app, onSignedIn }: { app: App; onSignedIn: () => voi
 export const AUTH_REQUIRED = {
   error: {
     code: "auth_required",
-    message: "Sign in with an administrator email and passcode to view this.",
+    message: "Sign in with an administrator email to view this.",
   },
 } as const;
 

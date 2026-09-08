@@ -172,6 +172,11 @@ npm run typecheck                      # both
   the whole document inline.
 - Entry files live in `entries/` and views in `views/`: on a case-insensitive filesystem
   `product.tsx` and `Product.tsx` are the same file.
+- **Chart colours are validated, not chosen.** [mcp-ops/views/src/lib/palette.ts](mcp-ops/views/src/lib/palette.ts)
+  records the validator output and the command to re-run. The previous palette had a series outside
+  the lightness band at 1.81:1 contrast — those bars were nearly invisible. Light and dark have
+  *different* bands (0.43–0.77 vs 0.48–0.67), so a palette that passes one can fail the other;
+  re-run both modes before changing a value.
 
 ### `docs/api-contract.md` + `.yaml`
 The frozen interface between the Go service and the MCP servers. The markdown holds the
@@ -209,6 +214,13 @@ dead one's signed-in user. It is a `secrets` token in a `WeakKeyDictionary` with
 from the Approve / Reject buttons on the confirmation card. The Go service does not enforce it and
 cannot — it cannot see which caller invoked the endpoint.
 
+**That gate therefore does not exist for any other host.** `mcp-shop` advertises `place_order` with
+`visibility: ["model", "app"]`, and `prepare_order` returns the confirmation token in its result —
+so a host wired straight to `shopping-mcp` (Claude Desktop is, as `raksul_catalog`) can call
+`prepare_order`, read the token out of the response and `place_order` it with no human ever
+clicking Approve. The fix is the mechanism already in the file: mark `place_order`
+`visibility: ["app"]` so a compliant host keeps it out of the model's tool list. Still open.
+
 ## Gotchas
 
 ### Data model
@@ -223,6 +235,15 @@ cannot — it cannot see which caller invoked the endpoint.
   Exact-first is load-bearing: without it a short slug drags in every longer slug that contains it.
   This is what lets a caller filter without fetching `/api/v1/categories` first — don't reintroduce
   that round trip.
+- **`limit` caps the TOTAL across groups, and whole groups are trimmed once it is spent**
+  ([catalog.go](backend-ops/internal/httpapi/catalog.go), `groupByCategory`). Groups sort largest
+  first, so `?limit=20` returns 20 products from the biggest category and **drops the other nine
+  entirely** — which reads as a broken shop. `per_category=N` is what spreads a response across
+  the catalog; `maxLimit` is 100, so no single call can return all 141 products.
+- **A group's `count` is how many that response returned, not how many the category holds.**
+  `groupByCategory` sets `g.Count = len(g.Products)` *after* trimming, so it can never tell you a
+  category's real size — `/api/v1/categories` carries `product_count` for that. Rendering `count`
+  as a category size under-reports whenever a response was trimmed.
 - **List endpoints echo an `applied` block** — the filter *as the server understood it*. Views
   render their controls from that, never from what they believe they sent; that is what makes a
   panel arrive pre-filled from a prompt and never disagree with the rows beneath it.
@@ -262,6 +283,17 @@ cannot — it cannot see which caller invoked the endpoint.
 `init-db` reads that exact file, so schema changes need no crawler edit. `init-db` **drops every
 table**, including `users` and `orders`; use `crawl --reset` to re-import only the catalog.
 
+**`init-db` against a running `api` leaves you with no administrator.** `is_admin` is granted only
+during API startup from `STOCKROOM_ADMIN_EMAILS`, so dropping `users` while `api` keeps running
+means every `/api/v1/admin/*` call — and every `mcp-ops` tool — returns 403 until you restart it.
+The order is always:
+
+```bash
+docker compose run --rm crawler init-db
+docker compose restart api          # re-grants is_admin
+docker compose run --rm crawler crawl
+```
+
 ### Crawler / source site
 - `/products/{id}` **404s without `?sku=`**.
 - **Never read prices from the Nuxt payload** — it uses index-based dereferencing, so
@@ -273,6 +305,16 @@ table**, including `users` and `orders`; use `crawl --reset` to re-import only t
 ### Frontend / infra / docs
 - **nginx `try_files ... /index.html` is load-bearing.** `/shop`, `/admin`, `/orders` are React
   routes; without it a hard refresh 404s.
+- **A literal hostname in `proxy_pass` is resolved once, at config load, and cached for the life of
+  the process.** Recreate the upstream (`docker compose up -d --build api`) and it gets a new IP
+  while nginx keeps dialling the old one — every proxied request 502s until nginx restarts too.
+  [chat-ui/nginx.conf](chat-ui/nginx.conf) resolves per request via Docker DNS (`resolver
+  127.0.0.11` + the upstream in a variable); **[frontend-ops/nginx.conf](frontend-ops/nginx.conf)
+  still has the literal form**, so `web` is exposed to this.
+- **The root `.env` shadows compose's `${VAR:-default}`.** Compose auto-loads it for interpolation,
+  so a variable set there wins and the `:-` fallback in `docker-compose.yml` never fires — editing
+  the compose default appears to do nothing. Precedence: shell env > `.env` > compose `:-` default >
+  the Python default in `config.py`. Check with `docker compose --profile tools config`.
 - The API container binds `0.0.0.0` **inside** the container (Docker cannot route to `127.0.0.1`
   there); the *published* port is what keeps it loopback-only.
 - `SHOP_ENABLED=false docker compose up -d api` turns the storefront into Page-not-found for
