@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { Button, Group, Table, Text, TextInput } from "@mantine/core";
-import { AUTH_REQUIRED, AdminGate, AdminSession, isAuthRequired, needsPasscode } from "../components/AdminGate";
 import { ErrorPanel, Shell, StatusPill } from "../components/Shell";
 import { createApp, readResult } from "../lib/mcp";
 import { asDate, yen } from "../lib/format";
@@ -22,7 +21,7 @@ type Applied = {
   min_quantity?: number; max_quantity?: number;
   from?: string; to?: string;
 };
-type Payload = { orders?: Order[]; total?: number; applied?: Applied; admin?: { email: string; name?: string } | null; };
+type Payload = { orders?: Order[]; total?: number; applied?: Applied };
 
 const STATUSES = ["pending", "confirmed", "cancelled"] as const;
 /** Field id -> the tool argument it fills. */
@@ -100,13 +99,7 @@ export default function Orders() {
 
   if (!data) return <Shell title="Orders" sub="Loading…">{null}</Shell>;
   if (data.error) {
-    return (
-      <Shell title="Orders" sub="">
-        {isAuthRequired(data)
-          ? <AdminGate app={app} onSignedIn={() => refetch(applied)} passcodeRequired={needsPasscode(data)} />
-          : <ErrorPanel error={data.error} />}
-      </Shell>
-    );
+    return <Shell title="Orders" sub=""><ErrorPanel error={data.error} /></Shell>;
   }
 
   const orders = data.orders ?? [];
@@ -152,7 +145,6 @@ export default function Orders() {
   return (
     <Shell
       title="Orders"
-      right={<AdminSession app={app} admin={data.admin} onSignedOut={() => setData(AUTH_REQUIRED)} />}
       sub={loading ? "Loading…" : `${orders.length} of ${data.total ?? orders.length} orders · ${units} units · ${yen(value)}`}
       bar={bar}
     >

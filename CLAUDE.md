@@ -204,6 +204,13 @@ stops a normal shop user reaching the dashboard, but not anyone who can forge th
 > proxies to it) turns `X-Stockroom-User` into an open impersonation switch. Never change a compose
 > ports line to `"8080:8080"`.
 
+**`mcp-ops` has no sign-in: it resolves `STOCKROOM_ADMIN_EMAIL` once at startup and sends that
+id on every call** (`_ensure_admin` in [api.py](mcp-ops/stockroom_ops/api.py)). So the access rule
+is "whoever can reach port 3001 is admin" — there is no per-connection identity and no credential.
+A per-connection sign-in with a passcode was built on the `hotfix` branch and then removed on
+request; `git log main..hotfix` has it if it is ever wanted back. This is the single biggest reason
+3001 must stay loopback-bound.
+
 **`owner(ctx)` in `mcp-shop` must not be `id(ctx.session)`.** Carts and confirmations are keyed on
 it, and a memory address is recycled once a session is collected, so a new session could inherit a
 dead one's signed-in user. It is a `secrets` token in a `WeakKeyDictionary` with a finalizer.

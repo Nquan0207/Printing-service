@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { Badge, Button, Group, Image, Paper, Table, Text, TextInput, Title } from "@mantine/core";
-import { AUTH_REQUIRED, AdminGate, AdminSession, isAuthRequired, needsPasscode } from "../components/AdminGate";
 import { ErrorPanel, Shell } from "../components/Shell";
 import { createApp, readResult } from "../lib/mcp";
 import { yen } from "../lib/format";
@@ -16,7 +15,6 @@ type Payload = {
   count?: number;
   selected_categories?: string[];
   unmatched_categories?: string[];
-  admin?: { email: string; name?: string } | null;
 };
 
 const app = createApp("Catalog");
@@ -124,14 +122,7 @@ export default function Catalog() {
   }
 
   if (!data) return <Shell title="Catalog" sub="Loading…">{null}</Shell>;
-  if (data.error)
-    return (
-      <Shell title="Catalog" sub="">
-        {isAuthRequired(data)
-          ? <AdminGate app={app} onSignedIn={() => refetch(selected, query)} passcodeRequired={needsPasscode(data)} />
-          : <ErrorPanel error={data.error} />}
-      </Shell>
-    );
+  if (data.error) return <Shell title="Catalog" sub=""><ErrorPanel error={data.error} /></Shell>;
 
   const groups = data.groups ?? [];
   const shown = selected.size
@@ -169,12 +160,7 @@ export default function Catalog() {
   );
 
   return (
-    <Shell
-      title="Catalog"
-      sub={loading ? "Loading…" : sub}
-      bar={bar}
-      right={<AdminSession app={app} admin={data.admin} onSignedOut={() => setData(AUTH_REQUIRED)} />}
-    >
+    <Shell title="Catalog" sub={loading ? "Loading…" : sub} bar={bar}>
       {groups.length === 0 ? (
         <Text size="sm" c="dimmed">No products match.</Text>
       ) : (
