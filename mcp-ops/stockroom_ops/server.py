@@ -11,12 +11,14 @@ import argparse
 import logging
 from typing import Annotated, Any
 
-from mcp.server.apps import Apps, ResourceCsp
+from mcp.server.apps import Apps, Context, ResourceCsp
 from mcp.server.mcpserver import MCPServer
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import ToolAnnotations
 from pydantic import BeforeValidator, Field
 
+from stockroom_ops import adminauth
+from stockroom_ops.adminauth import public
 from stockroom_ops.api import ApiError, StockroomApi
 from stockroom_ops.catalog import normalize_tokens
 from stockroom_ops.config import VIEWS_DIR, Settings
@@ -44,30 +46,6 @@ PRODUCT_URI = "ui://stockroom/product"
 USERS_URI = "ui://stockroom/users"
 
 STATUSES = ("pending", "confirmed", "cancelled")
-
-ADMIN_EMAIL_FIELD = Field(
-    description=(
-        "Required ops access email. Ask the user to provide it for this request; "
-        "never infer, reuse, or supply it on the user's behalf."
-    )
-)
-ADMIN_NAME_FIELD = Field(
-    description=(
-        "Required ops administrator name. Ask the user to provide it for this "
-        "request; never infer, reuse, or supply it on the user's behalf."
-    )
-)
-
-
-async def verify_ops_identity(
-    api: StockroomApi, admin_name: str, admin_email: str
-) -> dict[str, Any] | None:
-    """Ask the backend to verify both submitted values against PostgreSQL."""
-    try:
-        await api.verify_admin_identity(str(admin_name), str(admin_email))
-    except ApiError as exc:
-        return {"error": {"code": exc.code, "message": str(exc)}}
-    return None
 
 
 def read_only() -> ToolAnnotations:
@@ -121,13 +99,13 @@ def _score(name: str, needle: str) -> tuple[int, int]:
     return (2, len(name))
 
 
-async def _find_product(api: StockroomApi, text: str) -> dict[str, Any]:
+async def _find_product(api: StockroomApi, admin_id: int, text: str) -> dict[str, Any]:
     """Resolve a name fragment to exactly one product.
 
     Uses the admin catalog because it carries descriptions and inactive rows;
     an admin asking about a deactivated product should still get an answer.
     """
-    res = await api.products(text)
+    res = await api.products(admin_id, text)
     matches = [p for group in res.get("groups", []) for p in group.get("products", [])]
     if not matches:
         return {
@@ -147,7 +125,21 @@ async def _find_product(api: StockroomApi, text: str) -> dict[str, Any]:
     return best
 
 
+def with_admin(payload: dict[str, Any], owner_key: str) -> dict[str, Any]:
+    """Attach the signed-in admin to a tool result.
+
+    The panel renders its sign-out control from this, and a freshly re-rendered
+    panel uses it to tell that the connection is still authenticated instead of
+    showing the sign-in form over the top of real data.
+    """
+    if isinstance(payload, dict) and "error" not in payload:
+        payload = {**payload, "admin": public(owner_key)}
+    return payload
+
+
 def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
+    adminauth.set_ttl(settings.admin_session_ttl_seconds)
+    adminauth.set_require_passcode(settings.admin_require_passcode)
     apps = Apps()
     api = StockroomApi(settings.api_base, settings.admin_email)
 
@@ -196,9 +188,6 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="get_dashboard",
         title="Stockroom dashboard",
         description=(
-            "REQUIRES `admin_name` and `admin_email`, both supplied explicitly by "
-            "the user in this request. If either is absent, ask for both before "
-            "calling. Never guess, remember, or fill them in yourself.\n\n"
             "THE tool for charts, trends and 'how is the shop doing' questions — "
             "'visualise the data', 'show me some charts', 'revenue over time', "
             "'what sells best', 'how are orders trending'.\n\n"
@@ -214,16 +203,15 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         annotations=read_only(),
         structured_output=True,
     )
-    async def get_dashboard(
-        admin_name: Annotated[str, ADMIN_NAME_FIELD],
-        admin_email: Annotated[str, ADMIN_EMAIL_FIELD], days: int = 30
-    ) -> dict[str, Any]:
+    async def get_dashboard(ctx: Context, days: int = 30) -> dict[str, Any]:
         """Return dashboard figures for the last `days` days (1-365)."""
-        if refusal := await verify_ops_identity(api, admin_name, admin_email):
-            return refusal
+        owner_key = adminauth.owner(ctx)
+        admin_id = adminauth.user_id(owner_key)
+        if admin_id is None:
+            return adminauth.auth_required(owner_key)
         days = max(1, min(int(days), 365))
         try:
-            return await api.stats(days)
+            return with_admin(await api.stats(admin_id, days), owner_key)
         except ApiError as exc:
             # Surface a usable message rather than an empty iframe.
             return {"error": {"code": exc.code, "message": str(exc)}}
@@ -233,8 +221,6 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="list_orders",
         title="List orders",
         description=(
-            "REQUIRES `admin_name` and `admin_email` supplied explicitly by the "
-            "user in this request. If absent, ask for both; never fill them in.\n\n"
             "THE tool for any question about orders. Returns them newest first "
             "with line items, totals, unit counts and status, and renders as an "
             "interactive panel showing exactly the filters you passed.\n\n"
@@ -261,8 +247,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         structured_output=True,
     )
     async def list_orders(
-        admin_name: Annotated[str, ADMIN_NAME_FIELD],
-        admin_email: Annotated[str, ADMIN_EMAIL_FIELD],
+        ctx: Context,
         q: Annotated[
             LooseText,
             Field(
@@ -314,8 +299,10 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         limit: Annotated[int, Field(default=50, description="Rows to return.")] = 50,
     ) -> dict[str, Any]:
         """List orders, filtered by status, date, total and units ordered."""
-        if refusal := await verify_ops_identity(api, admin_name, admin_email):
-            return refusal
+        owner_key = adminauth.owner(ctx)
+        admin_id = adminauth.user_id(owner_key)
+        if admin_id is None:
+            return adminauth.auth_required(owner_key)
         bad = [s for s in normalize_tokens(status) if s not in STATUSES]
         if bad:
             # Caught here rather than at the API so the message can name the
@@ -338,14 +325,15 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
                 "min_quantity": int(min_quantity),
                 "max_quantity": int(max_quantity),
             }
-            return await api.orders(
+            return with_admin(await api.orders(
+                admin_id,
                 limit=max(1, min(int(limit), 200)),
                 q=str(q).strip(),
                 status=",".join(normalize_tokens(status)),
                 days=max(0, int(days)) or None,
                 **{"from": date_from, "to": date_to},
                 **{k: v for k, v in bounds.items() if v > 0},
-            )
+            ), owner_key)
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
 
@@ -354,8 +342,6 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="list_products",
         title="List products",
         description=(
-            "REQUIRES `admin_name` and `admin_email` supplied explicitly by the "
-            "user in this request. If absent, ask for both; never fill them in.\n\n"
             "THE tool for any request about multiple products, including "
             "'show me category X and Y'. Returns products grouped by category, "
             "each with its full details: sizes, unit prices and image URLs.\n\n"
@@ -370,8 +356,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         structured_output=True,
     )
     async def list_products(
-        admin_name: Annotated[str, ADMIN_NAME_FIELD],
-        admin_email: Annotated[str, ADMIN_EMAIL_FIELD],
+        ctx: Context,
         # A plain string, deliberately. A union schema (anyOf array/string/null)
         # makes models omit the argument entirely -- which looked exactly like
         # "the filter is broken".
@@ -397,15 +382,17 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         ] = True,
     ) -> dict[str, Any]:
         """List products grouped by category, optionally limited to some categories."""
-        if refusal := await verify_ops_identity(api, admin_name, admin_email):
-            return refusal
+        owner_key = adminauth.owner(ctx)
+        admin_id = adminauth.user_id(owner_key)
+        if admin_id is None:
+            return adminauth.auth_required(owner_key)
         # One request. The API resolves the words to slugs, filters in SQL and
         # returns category-first groups, so there is nothing to fetch first and
         # nothing to regroup after.
         try:
-            data = await api.products(
-                q, normalize_tokens(categories), include_inactive
-            )
+            data = with_admin(await api.products(
+                admin_id, q, normalize_tokens(categories), include_inactive
+            ), owner_key)
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
         return absolute_images(data, settings.public_api_base)
@@ -415,8 +402,6 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         name="get_product",
         title="Get product",
         description=(
-            "REQUIRES `admin_name` and `admin_email` supplied explicitly by the "
-            "user in this request. If absent, ask for both; never fill them in.\n\n"
             "ONE product in full, as its own panel: every photo, the "
             "description, brand, and the S/M/L price ladder.\n\n"
             "Use it when the user points at a single product — 'give me this "
@@ -432,8 +417,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         structured_output=True,
     )
     async def get_product(
-        admin_name: Annotated[str, ADMIN_NAME_FIELD],
-        admin_email: Annotated[str, ADMIN_EMAIL_FIELD],
+        ctx: Context,
         product: Annotated[
             LooseText,
             Field(
@@ -445,27 +429,27 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         ],
     ) -> dict[str, Any]:
         """Return one product, found by catalog id or by name."""
-        if refusal := await verify_ops_identity(api, admin_name, admin_email):
-            return refusal
+        owner_key = adminauth.owner(ctx)
+        admin_id = adminauth.user_id(owner_key)
+        if admin_id is None:
+            return adminauth.auth_required(owner_key)
         text = str(product).strip()
         try:
             if text.isdigit():
-                data = await api.product(int(text))
+                data = await api.product(admin_id, int(text))
             else:
-                data = await _find_product(api, text)
+                data = await _find_product(api, admin_id, text)
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
         if "error" in data:
             return data
-        return absolute_images(data, settings.public_api_base)
+        return with_admin(absolute_images(data, settings.public_api_base), owner_key)
 
     @apps.tool(
         resource_uri=USERS_URI,
         name="list_users",
         title="List users",
         description=(
-            "REQUIRES `admin_name` and `admin_email` supplied explicitly by the "
-            "user in this request. If absent, ask for both; never fill them in.\n\n"
             "THE tool for any question about accounts or customers. Returns "
             "them with open cart lines, order count and lifetime spend, and "
             "renders as an interactive panel showing exactly the filters you "
@@ -489,8 +473,7 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         structured_output=True,
     )
     async def list_users(
-        admin_name: Annotated[str, ADMIN_NAME_FIELD],
-        admin_email: Annotated[str, ADMIN_EMAIL_FIELD],
+        ctx: Context,
         q: Annotated[
             LooseText,
             Field(default="", description="Free text matched against name and email."),
@@ -530,8 +513,10 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
         limit: Annotated[int, Field(default=50, description="Rows to return.")] = 50,
     ) -> dict[str, Any]:
         """List user accounts, filtered by name, role, activity and spend."""
-        if refusal := await verify_ops_identity(api, admin_name, admin_email):
-            return refusal
+        owner_key = adminauth.owner(ctx)
+        admin_id = adminauth.user_id(owner_key)
+        if admin_id is None:
+            return adminauth.auth_required(owner_key)
         wanted = str(role).strip().lower()
         if wanted not in ("", "admin", "customer"):
             return {
@@ -546,7 +531,8 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
                 "min_spent": int(min_spent),
                 "max_spent": int(max_spent),
             }
-            return await api.users(
+            return with_admin(await api.users(
+                admin_id,
                 limit=max(1, min(int(limit), 200)),
                 q=str(q).strip(),
                 role=wanted,
@@ -556,20 +542,89 @@ def build_server(settings: Settings) -> tuple[MCPServer, StockroomApi]:
                 **({"max_orders": int(max_orders)} if int(max_orders) >= 0 else {}),
                 **{k: v for k, v in bounds.items() if v > 0},
                 **{"from": date_from, "to": date_to},
-            )
+            ), owner_key)
         except ApiError as exc:
             return {"error": {"code": exc.code, "message": str(exc)}}
+
+    # The sign-in pair is app-only: it ships in tools/list carrying
+    # _meta.ui.visibility, so a host that honours it offers these to the View
+    # and never to the model. A passcode must not be something a model can be
+    # talked into asking for, repeating, or putting in a transcript.
+    @apps.tool(
+        resource_uri=DASHBOARD_URI,
+        visibility=["app"],
+        name="admin_sign_in",
+        title="Admin sign in",
+        description=(
+            "Verify an administrator email — and a passcode when this server "
+            "requires one — for THIS connection. Called by the sign-in form "
+            "inside the panel, never by the model."
+        ),
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
+                                    idempotentHint=True, openWorldHint=False),
+        structured_output=True,
+    )
+    async def admin_sign_in(
+        ctx: Context, name: str, email: str, passcode: str = ""
+    ) -> dict[str, Any]:
+        """Sign in as an administrator on this connection."""
+        owner_key = adminauth.owner(ctx)
+        address = (email or "").strip().lower()
+        person = (name or "").strip()
+        # One message whichever half was wrong: which it was is not something
+        # an attacker should learn.
+        refusal = {
+            "error": {
+                "code": "invalid_credentials",
+                "message": (
+                    "That name, email and passcode do not match the ops administrator."
+                    if adminauth.require_passcode()
+                    else "That name and email do not match the ops administrator."
+                ),
+            }
+        }
+
+        if adminauth.require_passcode() and not adminauth.passcode_ok(
+            passcode or "", settings.admin_passcode
+        ):
+            log.warning("admin sign-in refused for %r", address or "(no email)")
+            return refusal
+        try:
+            account = await api.verify_admin_identity(person, address)
+        except ApiError as exc:
+            # 403 from the Go side means the pair did not match; anything else
+            # is a real fault and should say so rather than read as a bad login.
+            if exc.code in {"forbidden", "invalid_request"}:
+                log.warning("admin sign-in refused for %r", address or "(no email)")
+                return refusal
+            return {"error": {"code": exc.code, "message": str(exc)}}
+        if not account.get("is_admin"):
+            log.warning("admin sign-in refused for %r (not an admin)", address)
+            return refusal
+
+        return {"status": "ok", "admin": adminauth.sign_in(owner_key, account)}
+
+    @apps.tool(
+        resource_uri=DASHBOARD_URI,
+        visibility=["app"],
+        name="admin_sign_out",
+        title="Admin sign out",
+        description="End the administrator session on this connection.",
+        annotations=ToolAnnotations(readOnlyHint=False, destructiveHint=False,
+                                    idempotentHint=True, openWorldHint=False),
+        structured_output=True,
+    )
+    async def admin_sign_out(ctx: Context) -> dict[str, Any]:
+        """Forget the administrator signed in on this connection."""
+        adminauth.sign_out(adminauth.owner(ctx))
+        return {"status": "ok", "admin": None}
 
     server = MCPServer(
         name="stockroom-ops",
         version="0.1.0",
         instructions=(
             "Read-only operations view over a local RAKSUL stockroom PoC. "
-            "The catalog is a fixed crawled snapshot, not live inventory. "
-            "Every tool requires admin_name and admin_email explicitly supplied "
-            "by the user in the current request. If absent, ask for both. Never "
-            "infer, remember, or provide those arguments yourself. The backend "
-            "verifies both values and is_admin against PostgreSQL on every call."
+            "The catalog is a fixed crawled snapshot, not live inventory."
         ),
         extensions=[apps],
     )
@@ -589,9 +644,18 @@ def main() -> None:
     )
 
     settings = Settings.from_env()
+    if not settings.admin_passcode:
+        raise SystemExit(
+            "STOCKROOM_ADMIN_PASSCODE is not set. The admin tools are gated on it, "
+            "and an unset passcode would mean nobody can sign in.\n"
+            "Set it in .env (or the environment) and restart."
+        )
     server, _api = build_server(settings)
 
     if args.transport == "stdio":
+        # One connection per process, so the admin session can key on a
+        # constant. Over HTTP it keys on the transport's session id instead.
+        adminauth.set_stdio(True)
         server.run("stdio")
         return
 

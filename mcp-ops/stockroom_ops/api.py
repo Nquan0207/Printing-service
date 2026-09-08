@@ -41,42 +41,33 @@ class StockroomApi:
         self._base = base_url.rstrip("/")
         self._admin_email = admin_email
         self._client = httpx.AsyncClient(base_url=self._base, timeout=15)
-        self._user_id: int | None = None
 
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def _ensure_admin(self) -> int:
-        """Resolve the admin account to an id, once."""
-        if self._user_id is None:
-            data = await self._request(
-                "POST", "/api/v1/login", json={"email": self._admin_email}, identify=False
-            )
-            if not data.get("is_admin"):
-                raise RuntimeError(
-                    f"{self._admin_email} is not an admin; add it to "
-                    "STOCKROOM_ADMIN_EMAILS on the API and restart it."
-                )
-            self._user_id = int(data["user_id"])
-            log.info("acting as %s (user_id=%s)", self._admin_email, self._user_id)
-        return self._user_id
+    async def verify_admin_identity(self, name: str, email: str) -> dict[str, Any]:
+        """Check a submitted name AND email against the ops admin in Postgres.
 
-    async def verify_admin_identity(self, name: str, email: str) -> None:
-        """Re-read the submitted ops identity and admin flag from PostgreSQL."""
-        data = await self._request(
+        Stricter than looking the address up: the Go endpoint matches both
+        fields against its fixed ops identity and re-reads `is_admin`, so this
+        server never decides who is an admin -- it only asks.
+
+        Returns the account rather than caching it: the id belongs to the
+        connection that signed in, and two connections must not share one.
+        """
+        return await self._request(
             "POST",
             "/api/v1/admin/verify-identity",
             json={"name": name, "email": email},
-            identify=False,
+            user_id=None,
         )
-        self._user_id = int(data["user_id"])
 
     async def _request(
-        self, method: str, path: str, *, identify: bool = True, **kwargs: Any
+        self, method: str, path: str, *, user_id: int | None = None, **kwargs: Any
     ) -> Any:
         headers = dict(kwargs.pop("headers", {}))
-        if identify:
-            headers["X-Stockroom-User"] = str(await self._ensure_admin())
+        if user_id is not None:
+            headers["X-Stockroom-User"] = str(user_id)
         response = await self._client.request(method, path, headers=headers, **kwargs)
         if response.status_code >= 400:
             body = {}
@@ -91,18 +82,19 @@ class StockroomApi:
             )
         return response.json()
 
-    async def stats(self, days: int = 30) -> dict[str, Any]:
-        return await self._request("GET", "/api/v1/admin/stats", params={"days": days})
+    async def stats(self, user_id: int, days: int = 30) -> dict[str, Any]:
+        return await self._request("GET", "/api/v1/admin/stats", params={"days": days}, user_id=user_id)
 
-    async def orders(self, limit: int = 50, **filters: Any) -> dict[str, Any]:
+    async def orders(self, user_id: int, limit: int = 50, **filters: Any) -> dict[str, Any]:
         """List orders. Filters map straight onto the query string; the API
         resolves and echoes them back as `applied`."""
         return await self._request(
-            "GET", "/api/v1/admin/orders", params=_params(limit, filters)
+            "GET", "/api/v1/admin/orders", params=_params(limit, filters), user_id=user_id
         )
 
     async def products(
         self,
+        user_id: int,
         query: str | None = None,
         categories: list[str] | None = None,
         include_inactive: bool = True,
@@ -114,13 +106,13 @@ class StockroomApi:
             # Raw words, not slugs -- the API resolves them. One comma-separated
             # value covers any number of them.
             params["category"] = ",".join(categories)
-        return await self._request("GET", "/api/v1/admin/products", params=params)
+        return await self._request("GET", "/api/v1/admin/products", params=params, user_id=user_id)
 
-    async def product(self, product_id: int) -> dict[str, Any]:
-        return await self._request("GET", f"/api/v1/products/{product_id}")
+    async def product(self, user_id: int, product_id: int) -> dict[str, Any]:
+        return await self._request("GET", f"/api/v1/products/{product_id}", user_id=user_id)
 
-    async def users(self, limit: int = 50, **filters: Any) -> dict[str, Any]:
+    async def users(self, user_id: int, limit: int = 50, **filters: Any) -> dict[str, Any]:
         """List user accounts, with the same filter convention as `orders`."""
         return await self._request(
-            "GET", "/api/v1/admin/users", params=_params(limit, filters)
+            "GET", "/api/v1/admin/users", params=_params(limit, filters), user_id=user_id
         )
