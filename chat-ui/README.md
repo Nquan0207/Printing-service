@@ -54,3 +54,31 @@ than showing a bare "used a tool" note.
 
 **New chat** (`DELETE /api/chat/messages`) clears both the stored transcript and
 the model's context.
+
+## Interactive MCP apps
+
+Ops dashboards, orders, catalog, product details and users use the existing MCP
+views. “Open the interactive storefront” renders the shopping app. Results
+without view metadata keep the existing cards. The UI uses the official
+`@modelcontextprotocol/ext-apps` AppBridge with a separate-origin outer proxy and
+an opaque inner iframe. Resource CSP is delivered as an HTTP header.
+
+Compose exposes both chat and the sandbox on port 3004. Open the chat at
+`http://127.0.0.1:3004`; its sandbox loads from `http://localhost:3004` so the
+browser still isolates the embedded MCP app. For local Vite development, keep Docker running;
+`npm run dev` continues to proxy APIs to port 3002. Browser Computer Use or a
+manual browser session is needed to verify panel appearance and interactions.
+
+The sandbox derives the opposite loopback hostname on the same UI port. If you
+override it, set `VITE_MCP_SANDBOX_ORIGIN=http://localhost:<chat-port>` before
+rebuilding. The chat itself should be opened with `127.0.0.1`, as documented.
+
+Each ops request or panel interaction asks for an unfilled admin name/email
+form. Checkout opens a host-owned approval dialog; the model and generic app
+callbacks cannot submit an order directly. App callbacks report errors inside
+the panel; a failed app initialization also shows an explicit host error.
+
+```bash
+npm test
+npm run build
+```

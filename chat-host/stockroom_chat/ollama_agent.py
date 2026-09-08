@@ -135,7 +135,8 @@ class OllamaAgent:
                     }
                 else:
                     result = await state.mcp.call(name, arguments)
-                    state.ingest(result, name)
+                    if not name.startswith("ops__"):
+                        state.ingest(result, name)
 
                 visible_result = public_payload(result)
                 yield {"type": "tool_result", "tool": name, "result": visible_result}

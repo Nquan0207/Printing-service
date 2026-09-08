@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
+import os
 import secrets
 import threading
 from dataclasses import dataclass
@@ -11,6 +13,14 @@ from typing import Any
 from stockroom_shop.stockroom_client import StockroomAPIError, StockroomClient
 
 SCOPE = {"data_source": "stockroom_postgresql_via_go_api", "real_time": False, "mock_checkout": True}
+LOGGER = logging.getLogger(__name__)
+
+
+def _confirmation_log(event: str, token: str, owner_key: str) -> None:
+    # Correlate requests without exposing the confirmation capability or identity.
+    fingerprint = lambda value: hashlib.sha256(value.encode()).hexdigest()[:12]
+    LOGGER.warning("checkout event=%s pid=%s token_hash=%s owner_hash=%s",
+                   event, os.getpid(), fingerprint(token), fingerprint(owner_key))
 
 
 def utcnow(): return datetime.now(timezone.utc)
@@ -221,7 +231,12 @@ def prepare_order_handler(owner_key: str, shipping_address: str, name: str = "",
         token = secrets.token_urlsafe(32)
         confirmation = Confirmation(token, owner_key, STATE.user_id(owner_key), address, _cart_digest(cart), utcnow() + timedelta(minutes=15))
         with STATE.lock: STATE.confirmations[token] = confirmation
+<<<<<<< Updated upstream
         return {"status": "confirmation_required", "user": _public_user(owner_key), "cart": cart, "confirmation": {"token": token, "expires_at": confirmation.expires_at.isoformat(), "shipping_address": address}, "message": "Ask the user to explicitly approve or reject this mock order before calling place_order.", "scope": SCOPE}
+=======
+        _confirmation_log("prepared", token, owner_key)
+        return {"status": "confirmation_required", "cart": cart, "confirmation": {"token": token, "expires_at": confirmation.expires_at.isoformat(), "shipping_address": address}, "message": "Ask the user to explicitly approve or reject this mock order before calling place_order.", "scope": SCOPE}
+>>>>>>> Stashed changes
     return run(action)
 
 
@@ -230,7 +245,9 @@ def place_order_handler(owner_key: str, confirmation_token: str, decision: str):
         value = (decision or "").strip().lower()
         if value not in {"approve", "reject"}: raise StockroomAPIError("invalid_decision", "Decision must be approve or reject.", 400)
         with STATE.lock: confirmation = STATE.confirmations.get(confirmation_token)
-        if not confirmation or confirmation.owner_key != owner_key: raise StockroomAPIError("invalid_confirmation", "Confirmation token is invalid.", 403)
+        if not confirmation or confirmation.owner_key != owner_key:
+            _confirmation_log("token_missing" if not confirmation else "owner_mismatch", confirmation_token, owner_key)
+            raise StockroomAPIError("invalid_confirmation", "Confirmation token is invalid. Review the order again in this session.", 403)
         if confirmation.decision:
             if confirmation.decision != value: raise StockroomAPIError("decision_conflict", "This confirmation already has the opposite final decision.", 409)
             return success(decision=value, order=confirmation.order, idempotent=True, owner_key=owner_key)

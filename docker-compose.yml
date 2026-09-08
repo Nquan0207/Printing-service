@@ -135,12 +135,18 @@ services:
     depends_on:
       api: {condition: service_healthy}
       shopping-mcp: {condition: service_healthy}
+      mcp: {condition: service_started}
     environment:
       STOCKROOM_API_URL: http://api:8080
       SHOPPING_MCP_URL: http://shopping-mcp:3003
+<<<<<<< Updated upstream
       # Defaults to an Ollama on the host (Metal GPU). Set OLLAMA_URL to
       # http://ollama:11434 with --profile docker-ollama to keep it in Docker.
       OLLAMA_URL: "${OLLAMA_URL:-http://host.docker.internal:11434}"
+=======
+      OPS_MCP_URL: http://mcp:3001/mcp
+      OLLAMA_URL: http://host.docker.internal:11434
+>>>>>>> Stashed changes
       OLLAMA_MODEL: "${OLLAMA_MODEL:-qwen3:8b}"
       OLLAMA_TIMEOUT_SECONDS: "${OLLAMA_TIMEOUT_SECONDS:-600}"
       CHAT_SESSION_TTL_SECONDS: "${CHAT_SESSION_TTL_SECONDS:-86400}"
@@ -151,10 +157,14 @@ services:
   # /media and /healthz to `chat` so the browser sees one origin -- the session
   # cookie is host-only and tool results carry relative /media paths.
   chat-ui:
-    build: ./chat-ui
+    build:
+      context: ./chat-ui
+      args:
+        VITE_MCP_SANDBOX_ORIGIN: "${VITE_MCP_SANDBOX_ORIGIN:-}"
     depends_on:
       chat: {condition: service_healthy}
-    ports: ["127.0.0.1:${CHAT_UI_HOST_PORT:-3004}:8080"]
+    ports:
+      - "127.0.0.1:${CHAT_UI_HOST_PORT:-3004}:8080"
     restart: unless-stopped
 
   crawler:

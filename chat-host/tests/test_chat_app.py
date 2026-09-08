@@ -300,6 +300,9 @@ def test_http_login_cart_confirmation_gate_and_session_isolation():
         prepared = client.post("/api/order/prepare", json={"shipping_address": "Tokyo"})
         assert prepared.status_code == 200
         assert "token" not in prepared.json()["confirmation"]
+        assert prepared.json()["confirmation"]["review_id"]
+        stale = client.post("/api/order/decision", json={"decision": "approve", "review_id": "old-review"})
+        assert stale.status_code == 409
         approved = client.post("/api/order/decision", json={"decision": "approve"})
         assert approved.json()["order"]["order_number"] == "RKS-1"
         assert FakeMCP.instances[-1].calls[-1] == (

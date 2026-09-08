@@ -16,11 +16,8 @@ def utcnow() -> datetime:
 
 def public_payload(payload: dict[str, Any]) -> dict[str, Any]:
     """Remove server-held capabilities before returning data to a model/browser."""
-    output = deepcopy(payload)
-    confirmation = output.get("confirmation")
-    if isinstance(confirmation, dict):
-        confirmation.pop("token", None)
-    return output
+    from stockroom_chat.apps import browser_result
+    return browser_result(payload)
 
 
 def model_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -33,16 +30,26 @@ def model_payload(payload: dict[str, Any]) -> dict[str, Any]:
             return {
                 key: without_images(item)
                 for key, item in value.items()
-                if key not in {"image", "images"}
+                if key not in {"image", "images", "_mcp_result", "_mcp_app", "_ops_request", "review_id"}
             }
         return value
 
     return without_images(public_payload(payload))
 
 
-SYSTEM_PROMPT = """You are the local Stockroom shopping assistant. Reply in the user's language.
+SYSTEM_PROMPT = """You are the local Stockroom shopping and operations assistant. Reply in the user's language.
 
 MCP-first policy:
+- Tool names use shop__ for customer shopping and ops__ for administration.
+- For dashboards, revenue, trends, all customer orders, users, and admin catalog requests use ops__ tools.
+- For browsing and shopping use shop__ tools; open_storefront opens the interactive store.
+- If the user asks for an interface, storefront, embedded shop, UI, cards for browsing, or says they
+  want to buy without naming a specific product, call shop__open_storefront. Never promise to fetch
+  or display an interface without making that tool call in the same turn.
+- If the user asks to see product cards for a specific category or search, call shop__search_products.
+- Ops calls require a fresh host identity form. Never supply admin_name or admin_email yourself.
+- If a result says identity_required, ask the user to complete the displayed form and stop calling tools.
+- If a server is unavailable, explain that limitation instead of substituting another server's data.
 - For every request about products, categories, availability, product details, prices, sizes, quotes,
   recommendations, comparisons, the cart, or orders, call the most relevant supplied MCP tool before answering.
 - Treat MCP tool results as the only source of truth. Never invent or infer product IDs, size IDs, prices,
@@ -112,7 +119,7 @@ class ChatSession:
             self.confirmation_decision = None
         if isinstance(payload.get("order"), dict):
             self.order = payload["order"]
-        if tool_name in {"add_to_cart", "remove_cart_item"}:
+        if (tool_name or "").removeprefix("shop__") in {"add_to_cart", "remove_cart_item"}:
             self.confirmation = None
             self.confirmation_decision = None
             self.order = None

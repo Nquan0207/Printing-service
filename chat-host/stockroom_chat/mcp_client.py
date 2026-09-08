@@ -8,7 +8,11 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 
+<<<<<<< Updated upstream
 MODEL_BLOCKED_TOOLS = {"mock_sign_in", "sign_out", "open_storefront", "place_order"}
+=======
+MODEL_BLOCKED_TOOLS = {"mock_sign_in", "place_order"}
+>>>>>>> Stashed changes
 
 
 def ollama_tools(tools: list[Any]) -> list[dict[str, Any]]:
@@ -67,6 +71,7 @@ class StockroomMCPConnection:
         self._ready: asyncio.Future | None = None
         self.model_tools: list[dict[str, Any]] = []
         self.allowed_model_tools: set[str] = set()
+        self.tools: dict[str, Any] = {}
 
     async def start(self) -> None:
         if self._worker_task is not None:
@@ -83,6 +88,7 @@ class StockroomMCPConnection:
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     listed = await session.list_tools()
+                    self.tools = {tool.name: tool for tool in listed.tools}
                     self.model_tools = ollama_tools(listed.tools)
                     self.allowed_model_tools = {
                         item["function"]["name"] for item in self.model_tools
@@ -96,16 +102,25 @@ class StockroomMCPConnection:
                             break
                         name, arguments, future = command
                         try:
-                            raw = await session.call_tool(name, arguments)
-                            payload = result_payload(raw)
+                            if name == "__read_resource":
+                                raw = await session.read_resource(arguments["uri"])
+                                payload = raw.model_dump(by_alias=True, mode="json", exclude_none=True)
+                            else:
+                                raw = await session.call_tool(name, arguments)
+                                payload = result_payload(raw)
+                                payload = dict(payload)
+                                payload["_mcp_result"] = raw.model_dump(by_alias=True, mode="json", exclude_none=True)
                             if getattr(raw, "isError", False) and payload.get("status") != "error":
                                 payload = {
                                     "status": "error",
-                                    "error": {"code": "mcp_error", "message": str(payload)},
+                                    "error": {"code": "mcp_error", "message": "MCP server reported a tool error."},
                                 }
                             if not future.done():
                                 future.set_result(payload)
-                        except BaseException as exc:
+                        except asyncio.CancelledError:
+                            future.cancel()
+                            raise
+                        except Exception as exc:
                             if not future.done():
                                 future.set_exception(exc)
         except BaseException as exc:
@@ -136,4 +151,8 @@ class StockroomMCPConnection:
             return
         if not task.done():
             await self._commands.put(None)
-        await task
+        try:
+            await asyncio.wait_for(asyncio.shield(task), timeout=5)
+        except asyncio.TimeoutError:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
