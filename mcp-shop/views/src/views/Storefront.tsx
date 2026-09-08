@@ -4,6 +4,7 @@ import {
   Paper, SimpleGrid, Stack, Text, TextInput, Title,
 } from "@mantine/core";
 import { app, callTool, initialToolOutput, isOpenAIHost, unwrap } from "../lib/mcp";
+import { OrdersPanel } from "../components/OrdersPanel";
 
 type Size = { id: number; size_name: string; unit_price_jpy: number };
 type Product = {
@@ -113,6 +114,9 @@ export default function Storefront() {
 
   const [user, setUser] = useState<User | null>(null);
   const [cart, setCart] = useState<Cart | null>(null);
+  /** Which half of the shop the left column is showing. The cart column stays
+   *  put either way -- it is the thing you keep glancing at. */
+  const [tab, setTab] = useState<"catalog" | "orders">("catalog");
   const [confirmation, setConfirmation] = useState<Confirmation | null>(null);
   const [order, setOrder] = useState<Order | null>(null);
   const [busy, setBusy] = useState(false);
@@ -215,14 +219,18 @@ export default function Storefront() {
     }
   }
 
-  const signIn = () =>
-    run(async () => {
-      const signedIn = await callTool("mock_sign_in", { name, email });
-      const withCart = await callTool("get_cart");
-      return { ...signedIn, cart: withCart.cart };
-    }, (out) => {
-      seedCommerce(out);
-      setMessage({ text: "Database user and cart loaded." });
+  const signOut = () =>
+    run(() => callTool("sign_out"), () => {
+      // Drop every trace of the previous shopper from the panel: their cart
+      // stays with their account, and showing it to whoever is next would be
+      // both wrong and a small privacy leak.
+      setUser(null);
+      setCart(null);
+      setConfirmation(null);
+      setOrder(null);
+      setName("");
+      setEmail("");
+      setMessage({ text: "Signed out. Browsing as a guest." });
     });
 
   const add = (productId: number, sizeId: number, quantity: number) =>
@@ -240,7 +248,12 @@ export default function Storefront() {
     });
 
   const prepare = () =>
-    run(() => callTool("prepare_order", { shipping_address: address }), (out) => {
+    run(() => callTool("prepare_order", {
+      shipping_address: address,
+      // Sent only while still a guest; the server ignores them once the
+      // shopper is identified, so a returning buyer is never re-asked.
+      ...(user ? {} : { name: name.trim(), email: email.trim() }),
+    }), (out) => {
       seedCommerce(out);
       setOrder(null);
       setMessage({ text: "Review the confirmation before approving." });
@@ -283,7 +296,17 @@ export default function Storefront() {
   return (
     <Stack gap="sm" p="md">
       <Group justify="space-between" align="center">
-        <Title order={1} size="h4">RAKSUL Stockroom</Title>
+        <Group gap="xs" align="center">
+          <Title order={1} size="h4">RAKSUL Stockroom</Title>
+          <Button size="compact-xs" variant={tab === "catalog" ? "filled" : "subtle"}
+                  onClick={() => setTab("catalog")}>
+            Catalog
+          </Button>
+          <Button size="compact-xs" variant={tab === "orders" ? "filled" : "subtle"}
+                  onClick={() => setTab("orders")}>
+            My orders
+          </Button>
+        </Group>
         <Badge color="raksul" variant="light">DATABASE MOCK</Badge>
       </Group>
 
@@ -296,31 +319,29 @@ export default function Storefront() {
         <Alert color="red" variant="light" title="MCP App bridge error">{bridgeError}</Alert>
       )}
 
-      {!user ? (
-        <Paper p="md" radius="md">
-          <Stack gap="xs">
-            <Title order={2} size="h5">Select demo user</Title>
-            <Text size="xs" c="dimmed">
-              This creates or selects a database user without a password.
-            </Text>
-            <Group gap="xs" grow align="flex-end" wrap="nowrap">
-              <TextInput size="xs" label="Name" value={name}
-                onChange={(e) => setName(e.currentTarget.value)} />
-              <TextInput size="xs" label="Email" type="email" required value={email}
-                onChange={(e) => setEmail(e.currentTarget.value)} />
-              <Button size="xs" maw={110} loading={busy} onClick={signIn}>Continue</Button>
-            </Group>
-          </Stack>
-        </Paper>
-      ) : (
+      {(
         <>
-          <Text size="xs" c="dimmed">
-            Demo user <b>{user.name}</b> · {user.email}
-          </Text>
+          {/* Browsing and the cart are anonymous, exactly like a real shop.
+              Identity is asked for once, at checkout, and a shopper the host
+              already signed in is never asked at all. */}
+          <Group gap="xs" align="center">
+            <Text size="xs" c="dimmed">
+              {user ? <>Signed in as <b>{user.name}</b> · {user.email}</> : "Browsing as guest"}
+            </Text>
+            {user && (
+              // Without this, the first identity of the session was permanent:
+              // there was no way to buy as somebody else.
+              <Button size="compact-xs" variant="subtle" disabled={busy} onClick={signOut}>
+                Sign out
+              </Button>
+            )}
+          </Group>
 
           {/* Every category, always. Clicking one loads it whole and pages
-              through it here rather than asking the model for more. */}
-          <Group gap={6}>
+              through it here rather than asking the model for more.
+              Hidden on the orders tab: category chips filter a catalog that is
+              not on screen. */}
+          <Group gap={6} display={tab === "orders" ? "none" : undefined}>
             {categories.map((c) => (
               <Button
                 key={c.slug}
@@ -338,7 +359,7 @@ export default function Storefront() {
             ))}
           </Group>
 
-          <Group gap="xs" wrap="nowrap">
+          <Group gap="xs" wrap="nowrap" display={tab === "orders" ? "none" : undefined}>
             <TextInput size="xs" flex={1} placeholder="Search across every category…"
               value={query} onChange={(e) => setQuery(e.currentTarget.value)}
               onKeyDown={(e) => e.key === "Enter" && runSearch()} />
@@ -351,31 +372,42 @@ export default function Storefront() {
 
           <Group align="flex-start" gap="md" wrap="wrap">
             <Stack gap="xs" style={{ flex: "1 1 380px", minWidth: 0 }}>
-              <Group justify="space-between" align="center">
-                <Title order={2} size="h5">{activeName}</Title>
-                {shown.length > 0 && (
-                  <Text size="xs" c="dimmed">
-                    {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, shown.length)} of {shown.length}
-                  </Text>
-                )}
-              </Group>
-
-              {shown.length === 0 ? (
-                <Text size="xs" c="dimmed">
-                  {busy ? "Loading…" : "No products here."}
-                </Text>
+              {/* Order history loads only once it is asked for -- a shopper
+                  browsing the catalog should not pay for a query they never
+                  looked at. */}
+              {tab === "orders" ? (
+                // Mounted only when asked for, so a shopper browsing the
+                // catalog never pays for a query they did not look at.
+                <OrdersPanel />
               ) : (
                 <>
-                  <SimpleGrid cols={{ base: 1, xs: 2, md: 3 }} spacing="xs">
-                    {pageItems.map((p) => (
-                      <ProductCard key={p.id} product={p} busy={busy} onAdd={add} />
-                    ))}
-                  </SimpleGrid>
-                  {pageCount > 1 && (
-                    <Group justify="center" mt="xs">
-                      {/* Paging is local: the whole category is already here. */}
-                      <Pagination size="sm" total={pageCount} value={page} onChange={setPage} withEdges />
-                    </Group>
+                  <Group justify="space-between" align="center">
+                    <Title order={2} size="h5">{activeName}</Title>
+                    {shown.length > 0 && (
+                      <Text size="xs" c="dimmed">
+                        {(page - 1) * PAGE_SIZE + 1}–{Math.min(page * PAGE_SIZE, shown.length)} of {shown.length}
+                      </Text>
+                    )}
+                  </Group>
+
+                  {shown.length === 0 ? (
+                    <Text size="xs" c="dimmed">
+                      {busy ? "Loading…" : "No products here."}
+                    </Text>
+                  ) : (
+                    <>
+                      <SimpleGrid cols={{ base: 1, xs: 2, md: 3 }} spacing="xs">
+                        {pageItems.map((p) => (
+                          <ProductCard key={p.id} product={p} busy={busy} onAdd={add} />
+                        ))}
+                      </SimpleGrid>
+                      {pageCount > 1 && (
+                        <Group justify="center" mt="xs">
+                          {/* Paging is local: the whole category is already here. */}
+                          <Pagination size="sm" total={pageCount} value={page} onChange={setPage} withEdges />
+                        </Group>
+                      )}
+                    </>
                   )}
                 </>
               )}
@@ -405,7 +437,22 @@ export default function Storefront() {
                   </Group>
                   <TextInput size="xs" placeholder="Mock shipping address" value={address}
                     onChange={(e) => setAddress(e.currentTarget.value)} />
-                  <Button size="xs" disabled={busy || !cart.items.length} onClick={prepare}>
+                  {!user && (
+                    <>
+                      <Text size="xs" c="dimmed">Who is this order for?</Text>
+                      <Group gap="xs" grow wrap="nowrap">
+                        <TextInput size="xs" placeholder="Name" value={name}
+                          onChange={(e) => setName(e.currentTarget.value)} />
+                        <TextInput size="xs" placeholder="Email" type="email" value={email}
+                          onChange={(e) => setEmail(e.currentTarget.value)} />
+                      </Group>
+                    </>
+                  )}
+                  <Button
+                    size="xs"
+                    disabled={busy || !cart.items.length || (!user && !email.trim())}
+                    onClick={prepare}
+                  >
                     Review mock order
                   </Button>
                 </Stack>

@@ -8,7 +8,7 @@ from mcp import ClientSession
 from mcp.client.streamable_http import streamablehttp_client
 
 
-MODEL_BLOCKED_TOOLS = {"mock_sign_in", "open_storefront", "place_order"}
+MODEL_BLOCKED_TOOLS = {"mock_sign_in", "sign_out", "open_storefront", "place_order"}
 
 
 def ollama_tools(tools: list[Any]) -> list[dict[str, Any]]:
