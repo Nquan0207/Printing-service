@@ -28,7 +28,7 @@ type CartItem = {
 };
 type Cart = { items: CartItem[]; item_count: number; total_jpy: number };
 type User = { name: string; email: string };
-type Confirmation = { token: string; shipping_address: string };
+type Confirmation = { token?: string; shipping_address: string };
 type Order = { order_number: string; total_jpy: number };
 
 /** Products per page inside a category. */
@@ -206,6 +206,7 @@ function CartLine({
 }
 
 export default function Storefront() {
+  const [hostCheckout, setHostCheckout] = useState(false);
   const [categories, setCategories] = useState<Category[]>([]);
   /** Slug of the category on screen, or SEARCH. */
   const [active, setActive] = useState<string | null>(null);
@@ -242,6 +243,14 @@ export default function Storefront() {
   /** Load the category list, then open whichever category the model asked for. */
   async function bootstrap(seed: any) {
     seedCommerce(seed);
+    if (seed?._chat_host?.tokenFreeCheckout) setHostCheckout(true);
+    if (seed?._chat_host?.restored) {
+      const groups: Group[] = seed.groups ?? [];
+      setCategories(groups.map((group, index) => ({ id: index, slug: group.category.slug, name: group.category.name, product_count: group.count })));
+      setCache(Object.fromEntries(groups.map(group => [group.category.slug, group.products])));
+      setActive(groups[0]?.category.slug ?? null);
+      return;
+    }
     try {
       const list = await callTool<{ categories?: Category[] }>("list_categories");
       const cats = list.categories ?? [];
@@ -378,12 +387,12 @@ export default function Storefront() {
     // place_order takes the token prepare_order issued -- it is the capability
     // that authorises the write, not a formality. Without it the tool rejects
     // the call and no order is ever placed.
-    if (!confirmation?.token) {
+    if (!confirmation || (!confirmation.token && !hostCheckout)) {
       setMessage({ text: "Prepare the order again — its confirmation has been lost.", bad: true });
       return;
     }
     return run(
-      () => callTool("place_order", { confirmation_token: confirmation.token, decision }),
+      () => callTool("place_order", hostCheckout ? { decision } : { confirmation_token: confirmation.token, decision }),
       (out) => {
         setConfirmation(null);
         if (decision === "approve") {

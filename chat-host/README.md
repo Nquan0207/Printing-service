@@ -44,3 +44,39 @@ to follow the assistant message carrying the matching `tool_calls`, and those
 ids do not survive a restart — see `model_messages` in
 [history.py](stockroom_chat/history.py). The browser still re-renders cards
 from the stored `payload` column.
+
+## Ops and MCP apps
+
+Each browser session owns independent `shop` and `ops` MCP connections. Model
+names are `shop__<tool>` and `ops__<tool>`; original names are used on the wire.
+`OPS_MCP_URL` is a complete endpoint URL (default
+`http://127.0.0.1:3001/mcp`, Compose `http://mcp:3001/mcp`). An ops outage does
+not prevent shopping. Sign out and in to rediscover a recovered server.
+
+The host retains tool metadata and MCP results, exposing sanitized results to
+the browser and data-only results to Ollama. Session-bound app IDs authorize
+resource retrieval and callbacks to the originating server. HTML and identity
+fields are not saved in app metadata; confirmation tokens never leave the host.
+
+New authenticated interfaces:
+
+- `GET /api/apps/{id}/resource`: read the bound MCP HTML resource.
+- `GET /api/apps/{id}/sandbox`: sandbox document with resource-specific CSP.
+- `POST /api/apps/{id}/tools`: `{name, arguments, identity?: {name, email}}`.
+  Ops callbacks require fresh identity; sign-in and order placement are excluded.
+- `POST /api/apps/identity/{pending_id}`: `{name, email}` executes a pending ops
+  request. Incorrect identity can be retried; successful requests are consumed.
+
+SSE `tool_result.result` and persisted tool payloads may include `_mcp_result`,
+`_mcp_app` (session ID, server, tool, URI, sanitized input), or `_ops_request`.
+Old payloads still render as cards. History loading rebinds saved app descriptors
+without rerunning tools. New chat and logout clear live app capabilities.
+
+The storefront shares the host's shopping identity. Switching accounts uses
+chat logout/login. Its order action opens a host confirmation dialog and then
+uses `/api/order/decision`; generic tool forwarding cannot place orders.
+The optional `review_id` field on that endpoint rejects a changed checkout review.
+
+```bash
+PYTHONPATH=chat-host python -m pytest chat-host/tests
+```

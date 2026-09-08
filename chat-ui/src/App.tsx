@@ -14,6 +14,7 @@ import {
 } from "@mantine/core";
 import { notifications } from "@mantine/notifications";
 
+import type { AppDescriptor } from "./components/MCPApp";
 import { CartPanel } from "./components/CartPanel";
 import { CheckoutPanel } from "./components/CheckoutPanel";
 import { LoginCard } from "./components/LoginCard";
@@ -99,7 +100,7 @@ export default function App() {
       push({
         kind: "assistant",
         key: nextKey("hello"),
-        text: "You are signed in to the local demo. What would you like to buy?",
+        text: "You are signed in to the local demo. Would you like to shop or view operations?",
       });
     }
   }
@@ -150,6 +151,14 @@ export default function App() {
         setDecision(null);
       }
       if (result.order) setOrder(result.order as Order);
+      if (result._ops_request) {
+        push({ kind: "identity", key: nextKey("identity"), id: (result._ops_request as { id: string }).id });
+        return;
+      }
+      if (result._mcp_app) {
+        push({ kind: "app", key: nextKey("app"), descriptor: result._mcp_app as AppDescriptor, result });
+        return;
+      }
       const products = productsFrom(result);
       if (products.length) push({ kind: "products", key: nextKey("products"), products });
       const categories = categoriesFrom(result);
@@ -165,6 +174,19 @@ export default function App() {
       streaming.current = null;
     }
   }
+
+  useEffect(() => {
+    const onResult = (event: Event) => {
+      const value = (event as CustomEvent).detail;
+      if (value.cart) setCart(value.cart);
+      if (["add_to_cart", "remove_cart_item"].includes(value._tool)) { setConfirmation(null); setOrder(null); setDecision(null); }
+      if (value.confirmation) { setConfirmation(value.confirmation); setDecision(null); }
+      if (value.order) setOrder(value.order);
+      if (value.decision) { setDecision(value.decision); if (value.decision === "approve") setCart(EMPTY_CART); }
+    };
+    window.addEventListener("mcp-app-result", onResult);
+    return () => window.removeEventListener("mcp-app-result", onResult);
+  }, []);
 
   async function send(override?: string) {
     const value = (override ?? input).trim();
@@ -234,7 +256,7 @@ export default function App() {
 
   async function decide(choice: "approve" | "reject") {
     try {
-      const result = await api.decide(choice);
+      const result = await api.decide(choice, confirmation?.review_id);
       setDecision(choice);
       if (choice === "approve") {
         setOrder(result.order ?? null);
@@ -272,7 +294,7 @@ export default function App() {
             LOCAL OLLAMA + MCP
           </Text>
           <Title order={1} size="h2">
-            Stockroom shopping assistant
+            Stockroom assistant
           </Title>
         </div>
         <Group gap="xs">
@@ -319,7 +341,7 @@ export default function App() {
                   maxRows={6}
                   maxLength={4000}
                   disabled={busy}
-                  placeholder="Ask for products, prices, or help building a cart…"
+                  placeholder="Ask for products, an ops dashboard, orders, or users…"
                   value={input}
                   onChange={(event) => setInput(event.currentTarget.value)}
                   onKeyDown={(event) => {

@@ -38,7 +38,7 @@ export type CartItem = {
 
 export type Cart = { items: CartItem[]; item_count: number; total_jpy: number };
 
-export type Confirmation = { shipping_address: string; expires_at: string };
+export type Confirmation = { review_id?: string; shipping_address: string; expires_at: string };
 
 export type Order = { order_number: string; total_jpy: number };
 
@@ -101,10 +101,10 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ shipping_address }),
     }),
-  decide: (decision: "approve" | "reject") =>
+  decide: (decision: "approve" | "reject", review_id?: string) =>
     request<{ order?: Order }>("/api/order/decision", {
       method: "POST",
-      body: JSON.stringify({ decision }),
+      body: JSON.stringify({ decision, review_id }),
     }),
 };
 

@@ -9,3 +9,6 @@ crawler/.env
 
 node_modules/
 dist/
+
+# TypeScript incremental build cache
+*.tsbuildinfo

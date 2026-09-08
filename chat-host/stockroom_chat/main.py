@@ -14,10 +14,11 @@ from pydantic import BaseModel, Field
 import uvicorn
 
 from stockroom_chat.config import ChatSettings
+from stockroom_chat.apps import MCPRouter
 from stockroom_chat.history import ChatHistory, model_messages
 from stockroom_chat.mcp_client import StockroomMCPConnection
 from stockroom_chat.ollama_agent import OllamaAgent
-from stockroom_chat.sessions import SYSTEM_PROMPT, ChatSession, SessionStore, public_payload
+from stockroom_chat.sessions import SYSTEM_PROMPT, ChatSession, SessionStore, public_payload, model_payload
 
 
 COOKIE_NAME = "stockroom_chat_session"
@@ -32,6 +33,12 @@ class ChatRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
 
 
+class AppToolRequest(BaseModel):
+    name: str
+    arguments: dict[str, Any] = Field(default_factory=dict)
+    identity: dict[str, str] | None = None
+
+
 class AddCartItemRequest(BaseModel):
     product_id: int = Field(gt=0)
     size_id: int = Field(gt=0)
@@ -44,6 +51,7 @@ class PrepareOrderRequest(BaseModel):
 
 class DecisionRequest(BaseModel):
     decision: str
+    review_id: str | None = None
 
 
 def _error_status(payload: dict[str, Any]) -> int:
@@ -102,7 +110,7 @@ def create_app(
             mcp_url=config.shopping_mcp_url,
             ttl_seconds=config.session_ttl_seconds,
             max_sessions=config.max_sessions,
-            mcp_factory=mcp_factory,
+            mcp_factory=(lambda url: MCPRouter(url, config.ops_mcp_url)) if mcp_factory is StockroomMCPConnection else mcp_factory,
         )
         chat_agent = agent or OllamaAgent(
             client,
@@ -134,6 +142,16 @@ def create_app(
             raise HTTPException(401, "Demo sign-in is required.")
         return state
 
+    @app.middleware("http")
+    async def same_origin_writes(request: Request, call_next):
+        # The sandbox shares a hostname but not an origin. Cookies must not
+        # let embedded code call host mutation endpoints directly.
+        if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
+            origin = request.headers.get("origin")
+            if origin and origin != f"{request.url.scheme}://{request.headers.get('host')}":
+                return JSONResponse({"detail": "Cross-origin writes are not allowed."}, status_code=403)
+        return await call_next(request)
+
     @app.post("/api/session/login")
     async def login(body: LoginRequest, request: Request, response: Response):
         previous = request.cookies.get(COOKIE_NAME)
@@ -161,6 +179,10 @@ def create_app(
         transcript = []
         if state.user_id is not None:
             transcript = await request.app.state.history.load(state.user_id)
+            if isinstance(state.mcp, MCPRouter):
+                for row in transcript:
+                    if isinstance(row.get("payload"), dict):
+                        state.mcp.restore(row["payload"])
             state.messages = model_messages(SYSTEM_PROMPT, transcript)
         response.set_cookie(
             COOKIE_NAME,
@@ -186,6 +208,10 @@ def create_app(
         transcript = []
         if state.user_id is not None:
             transcript = await request.app.state.history.load(state.user_id)
+            if isinstance(state.mcp, MCPRouter):
+                for row in transcript:
+                    if isinstance(row.get("payload"), dict):
+                        state.mcp.restore(row["payload"])
         return {
             "authenticated": True,
             "user": state.user,
@@ -270,6 +296,9 @@ def create_app(
             if state.user_id is not None:
                 await request.app.state.history.clear(state.user_id)
             state.messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+            if isinstance(state.mcp, MCPRouter):
+                state.mcp.bindings.clear()
+                state.mcp.pending.clear()
         return {"status": "ok"}
 
     @app.post("/api/cart/items")
@@ -306,7 +335,7 @@ def create_app(
         async with state.lock:
             result = _require_success(await state.mcp.call("remove_cart_item", {"item_id": item_id}))
             state.ingest(result, "remove_cart_item")
-            return result
+            return public_payload(result)
 
     @app.post("/api/order/prepare")
     async def prepare_order(body: PrepareOrderRequest, request: Request):
@@ -329,6 +358,8 @@ def create_app(
         async with state.lock:
             if not state.confirmation:
                 raise HTTPException(409, "Prepare and review the cart before deciding.")
+            if body.review_id is not None and body.review_id != public_payload({"confirmation": state.confirmation})["confirmation"].get("review_id"):
+                raise HTTPException(409, "The checkout review changed. Review the current order again.")
             result = _require_success(
                 await state.mcp.call(
                     "place_order",
@@ -347,7 +378,82 @@ def create_app(
                     else "Mock order rejected. Your cart was preserved."
                 )
                 await request.app.state.history.append(state.user_id, "assistant", note)
-            return result
+            return public_payload(result)
+
+    async def app_session(request: Request):
+        state = await current_session(request)
+        if not isinstance(state.mcp, MCPRouter):
+            raise HTTPException(503, "MCP apps are unavailable.")
+        return state
+
+    async def publish_app_result(state, result, tool):
+        if tool.startswith("shop__"):
+            state.ingest(result, tool)
+        visible = public_payload(result)
+        state.messages.append({"role": "assistant", "content": f"The user ran {tool} in the app. Result: " + json.dumps(model_payload(result), ensure_ascii=False)})
+        if state.user_id is not None:
+            await app.state.history.append(state.user_id, "tool", f"Using MCP tool: {tool}", tool_name=tool, payload=visible)
+        return visible
+
+    @app.post("/api/apps/identity/{pending_id}")
+    async def run_ops(pending_id: str, body: LoginRequest, request: Request):
+        state = await app_session(request)
+        async with state.lock:
+            pending = state.mcp.pending.get(pending_id)
+            if pending is None:
+                raise HTTPException(410, "This request expired. Ask the assistant again.")
+            if not body.name.strip() or not body.email.strip():
+                raise HTTPException(400, "Enter both admin name and email.")
+            args = {**pending["arguments"], "admin_name": body.name.strip(), "admin_email": body.email.strip()}
+            result = await state.mcp.execute("ops", pending["tool"], args)
+            if not result.get("error") and result.get("status") != "error":
+                state.mcp.pending.pop(pending_id, None)
+            return await publish_app_result(state, result, "ops__" + pending["tool"])
+
+    @app.get("/api/apps/{app_id}/resource")
+    async def app_resource(app_id: str, request: Request):
+        state = await app_session(request)
+        if app_id not in state.mcp.bindings:
+            raise HTTPException(404, "App expired. Reload the conversation.")
+        try:
+            return await state.mcp.resource(app_id)
+        except Exception as exc:
+            raise HTTPException(502, "Unable to load MCP app resource.") from exc
+
+    @app.post("/api/apps/{app_id}/tools")
+    async def app_tool(app_id: str, body: AppToolRequest, request: Request):
+        state = await app_session(request)
+        async with state.lock:
+            binding = state.mcp.bindings.get(app_id)
+            if binding is None:
+                raise HTTPException(404, "App expired. Reload the conversation.")
+            result = await state.mcp.app_call(app_id, body.name, body.arguments, body.identity)
+            return await publish_app_result(state, result, binding["server"] + "__" + body.name)
+
+    @app.get("/api/apps/{app_id}/sandbox")
+    async def app_sandbox(app_id: str, request: Request):
+        resource = await app_resource(app_id, request)
+        contents = resource.get("contents", [])
+        if not contents:
+            raise HTTPException(502, "MCP app resource is empty.")
+        meta = contents[0].get("_meta", {})
+        csp = (meta.get("ui") or {}).get("csp", {})
+        def domains(key):
+            from urllib.parse import urlsplit
+            values = csp.get(key, [])
+            return " ".join(value for value in values if isinstance(value, str)
+                            and urlsplit(value).scheme in {"http", "https"}
+                            and not any(ch.isspace() or ch in ";'\"\\" for ch in value))
+        resources = domains("resourceDomains")
+        connections = domains("connectDomains")
+        policy = ("default-src 'none'; script-src 'self' 'unsafe-inline'; "
+                  "style-src 'unsafe-inline'; frame-src 'self'; "
+                  f"img-src data: blob: {resources}; font-src data: {resources}; "
+                  f"connect-src {connections or chr(39) + 'none' + chr(39)}; "
+                  "base-uri 'none'; form-action 'none'")
+        return Response('<!doctype html><html><head><meta charset="utf-8"></head>'
+                        '<body style="margin:0;height:100vh"><script src="/sandbox.js"></script></body></html>',
+                        media_type="text/html", headers={"Content-Security-Policy": policy, "Cache-Control": "no-store"})
 
     @app.get("/media/{media_path:path}")
     async def media(media_path: str, request: Request):

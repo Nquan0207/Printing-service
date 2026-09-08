@@ -7,6 +7,8 @@ COPY package.json package-lock.json* ./
 RUN npm install
 
 COPY . .
+ARG VITE_MCP_SANDBOX_ORIGIN
+ENV VITE_MCP_SANDBOX_ORIGIN=$VITE_MCP_SANDBOX_ORIGIN
 RUN npm run build
 
 # ---- runtime ----

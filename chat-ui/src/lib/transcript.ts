@@ -3,7 +3,11 @@
 
 import type { Category, Product, StoredMessage } from "./api";
 
+import type { AppDescriptor } from "../components/MCPApp";
+
 export type Entry =
+  | { kind: "app"; key: string; descriptor: AppDescriptor; result: Record<string, unknown>; restored?: boolean }
+  | { kind: "identity"; key: string; id: string }
   | { kind: "user"; key: string; text: string }
   | { kind: "assistant"; key: string; text: string }
   | { kind: "tool"; key: string; tool: string }
@@ -61,6 +65,16 @@ export function entriesFromStored(messages: StoredMessage[]): Entry[] {
         key: `m${message.id}`,
         tool: message.tool_name ?? "unknown",
       });
+      const app = message.payload?._mcp_app as AppDescriptor | undefined;
+      if (app) {
+        entries.push({ kind: "app", key: `m${message.id}-app`, descriptor: app, result: message.payload!, restored: true });
+        continue;
+      }
+      const opsRequest = message.payload?._ops_request as { id?: string } | undefined;
+      if (opsRequest?.id) {
+        entries.push({ kind: "identity", key: `m${message.id}-identity`, id: opsRequest.id });
+        continue;
+      }
       const products = productsFrom(message.payload);
       if (products.length) {
         entries.push({ kind: "products", key: `m${message.id}-p`, products });
